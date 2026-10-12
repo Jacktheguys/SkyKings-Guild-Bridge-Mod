@@ -69,6 +69,23 @@ public final class GuildBridgeMod implements ClientModInitializer {
         return reply(source, "none".equals(color.toLowerCase()) ? "Name colour cleared." : "Your name colour is now " + color.toLowerCase() + ".");
     }
 
+    /** Text colour of [Discord], [Bridge] or [Bot] messages (only on your screen). */
+    private static int setTextColor(FabricClientCommandSource source, String type, String color) {
+        String c = color.toLowerCase();
+        if (NameColors.rgb(c) == null) return reply(source, "Colours: " + String.join(", ", NameColors.CHOICES.subList(1, NameColors.CHOICES.size())));
+        BridgeConfig cfg = BridgeConfig.get();
+        switch (type.toLowerCase()) {
+            case "discord" -> cfg.discordTextColor = c;
+            case "bridge" -> cfg.bridgeTextColor = c;
+            case "bot" -> cfg.botTextColor = c;
+            default -> {
+                return reply(source, "Use discord, bridge or bot.");
+            }
+        }
+        BridgeConfig.save();
+        return reply(source, type.toLowerCase() + " messages are now " + c + ".");
+    }
+
     /** Settings the server uses: whether you see Discord messages (shown next to your name there). */
     public static void sendPrefs() {
         BridgeConfig cfg = BridgeConfig.get();
@@ -154,6 +171,18 @@ public final class GuildBridgeMod implements ClientModInitializer {
                                 return builder.buildFuture();
                             })
                             .executes(ctx -> setNameColor(ctx.getSource(), StringArgumentType.getString(ctx, "colour")))))
+                    .then(literal("textcolour").then(argument("type", StringArgumentType.word())
+                            .suggests((ctx, builder) -> {
+                                for (String s : new String[]{"discord", "bridge", "bot"}) builder.suggest(s);
+                                return builder.buildFuture();
+                            })
+                            .then(argument("colour", StringArgumentType.word())
+                                    .suggests((ctx, builder) -> {
+                                        NameColors.CHOICES.subList(1, NameColors.CHOICES.size()).forEach(builder::suggest);
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(ctx -> setTextColor(ctx.getSource(), StringArgumentType.getString(ctx, "type"),
+                                            StringArgumentType.getString(ctx, "colour"))))))
                     .then(literal("claim").then(argument("code", StringArgumentType.word())
                             .executes(ctx -> sendIfReady(ctx, "claim_guild", Map.of("code", StringArgumentType.getString(ctx, "code"))))))
                     .then(literal("run").then(argument("id", LongArgumentType.longArg(1))
@@ -228,6 +257,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
         for (String line : new String[]{
                 "/gbridge - settings and every command, on one screen",
                 "/gbridge colour <colour> - your name colour for other mod users",
+                "/gbridge textcolour <discord|bridge|bot> <colour> - message text colours",
                 "/bc <message> - talk to Discord and mod users only (not in guild chat)",
                 "/gbridge status - connection status",
                 "/gbridge online - who's online with the mod",

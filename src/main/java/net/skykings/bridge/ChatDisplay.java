@@ -38,11 +38,16 @@ public final class ChatDisplay {
 
     /** authorRgb: colour for the name (a player's chosen colour or a Discord role colour), or null for white. */
     public static void message(String label, ChatFormatting color, String author, Integer authorRgb, String message) {
+        message(label, color, author, authorRgb, null, message);
+    }
+
+    /** textRgb: the message text's colour (the player's choice in /gbridge), or null for grey. */
+    public static void message(String label, ChatFormatting color, String author, Integer authorRgb, Integer textRgb, String message) {
         MutableComponent name = Component.literal(safe(author, 32));
         name = authorRgb == null ? name.withStyle(ChatFormatting.WHITE) : name.withStyle((s) -> s.withColor(authorRgb));
-        show(tag(label, color)
-                .append(name)
-                .append(Component.literal(": " + safe(message, 256)).withStyle(ChatFormatting.GRAY)));
+        MutableComponent text = Component.literal(": " + safe(message, 256));
+        text = textRgb == null ? text.withStyle(ChatFormatting.GRAY) : text.withStyle((s) -> s.withColor(textRgb));
+        show(tag(label, color).append(name).append(text));
     }
 
     /** A message from the mod itself. */

@@ -27,6 +27,10 @@ public final class BridgeConfig {
     public boolean guildChatVisible = true;
     /** Your name colour for other mod users (a ChatFormatting name like "gold"), or "none". */
     public String nameColor = "none";
+    /** Text colour of [Discord], [Bridge] and [Bot] messages in your chat (colour names like "white"). */
+    public String discordTextColor = "white";
+    public String bridgeTextColor = "white";
+    public String botTextColor = "yellow";
 
     /** Whether Discord/bridge/bot lines should be shown right now. */
     public boolean showBridgeLines() {

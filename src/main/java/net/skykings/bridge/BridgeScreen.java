@@ -197,47 +197,87 @@ public final class BridgeScreen extends Screen {
     private static final int SWATCH = 12;
     private static final int SWATCH_GAP = 6;
 
-    /** "Name colour": a row of swatches; the chosen one has a white ring. */
-    private int drawColors(GuiGraphicsExtractor g, int y, int mouseX, int mouseY) {
-        g.text(font, "Name colour", px + 14, y + 5, TEXT, false);
-        g.text(font, "How other mod users see your name", px + 14, y + 16, MUTED, false);
-        String chosen = BridgeConfig.get().nameColor;
-        int x = px + 14;
-        int sy = y + 30;
-        for (String color : NameColors.CHOICES) {
-            if (x + SWATCH > px + pw - 14) {
-                x = px + 14;
-                sy += SWATCH + SWATCH_GAP;
-            }
-            boolean hover = inContent(mouseY) && inside(mouseX, mouseY, x - 2, sy - 2, SWATCH + 4, SWATCH + 4);
-            if (color.equals(chosen)) roundRect(g, x - 2, sy - 2, SWATCH + 4, SWATCH + 4, (SWATCH + 4) / 2, 0xFFFFFFFF);
-            Integer rgb = NameColors.rgb(color);
-            int grow = hover ? 1 : 0;
-            if (rgb == null) {
-                // "none": a grey disc with a slash through it
-                roundRect(g, x - grow, sy - grow, SWATCH + grow * 2, SWATCH + grow * 2, (SWATCH + grow * 2) / 2, 0xFF3A3E49);
-                for (int i = 2; i < SWATCH - 2; i++) g.fill(x + i, sy + SWATCH - 1 - i, x + i + 1, sy + SWATCH - i, MUTED);
-            } else {
-                roundRect(g, x - grow, sy - grow, SWATCH + grow * 2, SWATCH + grow * 2, (SWATCH + grow * 2) / 2, 0xFF000000 | rgb);
-            }
-            x += SWATCH + SWATCH_GAP;
-        }
-        return (sy + SWATCH) - y + 8;
+    /** A colour picker row: name, description, and swatches (the chosen one has a white ring). */
+    private record ColorRow(String name, String description, List<String> choices,
+                            java.util.function.Supplier<String> get, Consumer<String> set) {}
+
+    private List<ColorRow> colorRows() {
+        BridgeConfig cfg = BridgeConfig.get();
+        List<String> textChoices = NameColors.CHOICES.subList(1, NameColors.CHOICES.size()); // no "none"
+        return List.of(
+                new ColorRow("Name colour", "How other mod users see your name", NameColors.CHOICES,
+                        () -> cfg.nameColor, (c) -> GuildBridgeMod.setNameColor(c)),
+                new ColorRow("Discord message colour", "Text of [Discord] messages in your chat", textChoices,
+                        () -> cfg.discordTextColor, (c) -> { cfg.discordTextColor = c; BridgeConfig.save(); }),
+                new ColorRow("Bridge chat colour", "Text of [Bridge] (/bc) messages", textChoices,
+                        () -> cfg.bridgeTextColor, (c) -> { cfg.bridgeTextColor = c; BridgeConfig.save(); }),
+                new ColorRow("Bot reply colour", "Text of [Bot] answers to !nw and the rest", textChoices,
+                        () -> cfg.botTextColor, (c) -> { cfg.botTextColor = c; BridgeConfig.save(); }));
     }
 
-    /** The swatch under the mouse in the settings tab, or null. */
-    private String colorAt(double mx, double my, int y) {
+    /** Where each swatch of a row goes: {x, y} per choice, wrapping when the panel is narrow. */
+    private int[][] swatchSpots(ColorRow row, int y) {
+        int[][] spots = new int[row.choices().size()][];
         int x = px + 14;
         int sy = y + 30;
-        for (String color : NameColors.CHOICES) {
+        for (int i = 0; i < spots.length; i++) {
             if (x + SWATCH > px + pw - 14) {
                 x = px + 14;
                 sy += SWATCH + SWATCH_GAP;
             }
-            if (inside(mx, my, x - 2, sy - 2, SWATCH + 4, SWATCH + 4)) return color;
+            spots[i] = new int[]{x, sy};
             x += SWATCH + SWATCH_GAP;
         }
-        return null;
+        return spots;
+    }
+
+    private int rowHeight(ColorRow row, int y) {
+        int[][] spots = swatchSpots(row, y);
+        return spots[spots.length - 1][1] + SWATCH - y + 10;
+    }
+
+    /** Every colour row, one under another; returns their total height. */
+    private int drawColors(GuiGraphicsExtractor g, int y, int mouseX, int mouseY) {
+        int top = y;
+        for (ColorRow row : colorRows()) {
+            g.text(font, row.name(), px + 14, y + 5, TEXT, false);
+            g.text(font, ellipsize(row.description(), pw - 28), px + 14, y + 16, MUTED, false);
+            String chosen = row.get().get();
+            int[][] spots = swatchSpots(row, y);
+            for (int i = 0; i < spots.length; i++) {
+                String color = row.choices().get(i);
+                int x = spots[i][0], sy = spots[i][1];
+                boolean hover = inContent(mouseY) && inside(mouseX, mouseY, x - 2, sy - 2, SWATCH + 4, SWATCH + 4);
+                if (color.equals(chosen)) roundRect(g, x - 2, sy - 2, SWATCH + 4, SWATCH + 4, (SWATCH + 4) / 2, 0xFFFFFFFF);
+                Integer rgb = NameColors.rgb(color);
+                int grow = hover ? 1 : 0;
+                int size = SWATCH + grow * 2;
+                if (rgb == null) {
+                    // "none": a grey disc with a slash through it
+                    roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF3A3E49);
+                    for (int k = 2; k < SWATCH - 2; k++) g.fill(x + k, sy + SWATCH - 1 - k, x + k + 1, sy + SWATCH - k, MUTED);
+                } else {
+                    roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF000000 | rgb);
+                }
+            }
+            y += rowHeight(row, y);
+        }
+        return y - top;
+    }
+
+    /** Clicks on a swatch in any colour row: true if one was picked. */
+    private boolean clickColor(double mx, double my, int y) {
+        for (ColorRow row : colorRows()) {
+            int[][] spots = swatchSpots(row, y);
+            for (int i = 0; i < spots.length; i++) {
+                if (inside(mx, my, spots[i][0] - 2, spots[i][1] - 2, SWATCH + 4, SWATCH + 4)) {
+                    row.set().accept(row.choices().get(i));
+                    return true;
+                }
+            }
+            y += rowHeight(row, y);
+        }
+        return false;
     }
 
     private int drawOnline(GuiGraphicsExtractor g, int top, BridgeConnection connection) {
@@ -270,6 +310,7 @@ public final class BridgeScreen extends Screen {
             {"/gbridge online", "who has the mod"},
             {"/gbridge tasks", "staff tasks waiting for you"},
             {"/gbridge colour <colour>", "your name colour"},
+            {"/gbridge textcolour", "discord|bridge|bot <colour>"},
             {"/gbridge reconnect", "sign in again"},
             {"#Guild chat, /bc or Discord"},
             {"!nw [player]", "networth"},
@@ -287,7 +328,10 @@ public final class BridgeScreen extends Screen {
 
     private int drawCommands(GuiGraphicsExtractor g, int top) {
         int y = top;
-        int descX = px + 14 + Math.min(118, pw / 2 - 20);
+        // Descriptions start after the longest command (but leave them at least a third of the panel).
+        int longest = 0;
+        for (String[] line : COMMANDS) if (!line[0].startsWith("#")) longest = Math.max(longest, font.width(line[0]));
+        int descX = px + 14 + Math.min(longest + 12, pw * 2 / 3 - 14);
         for (String[] line : COMMANDS) {
             if (line[0].startsWith("#")) {
                 if (y != top) y += 6;
@@ -390,11 +434,7 @@ public final class BridgeScreen extends Screen {
                 }
                 y += ROW_H;
             }
-            String color = colorAt(mx, my, y);
-            if (color != null) {
-                GuildBridgeMod.setNameColor(color);
-                return true;
-            }
+            if (clickColor(mx, my, y)) return true;
         }
         return false;
     }

@@ -247,10 +247,10 @@ public final class BridgeConnection implements WebSocket.Listener {
                 String message = str(msg, "message");
                 boolean show = cfg.showBridgeLines(); // hidden while guild chat is toggled off
                 switch (kind) {
-                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, rgbField(msg), message); }
-                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, message); }
-                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), message); }
-                    case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", message); }
+                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, rgbField(msg), NameColors.rgb(cfg.discordTextColor), message); }
+                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, rgbField(msg), NameColors.rgb(cfg.discordTextColor), message); }
+                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.rgb(cfg.bridgeTextColor), message); }
+                    case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", null, NameColors.rgb(cfg.botTextColor), message); }
                     default -> ChatDisplay.system(message);
                 }
             }
