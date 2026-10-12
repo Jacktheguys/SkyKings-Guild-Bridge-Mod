@@ -22,7 +22,9 @@ public final class ChatDisplay {
 
     /** Plain single-line text with colour codes and control characters removed. */
     public static String safe(String text, int maxLength) {
-        String clean = text == null ? "" : text.replaceAll("§.?", "").replaceAll("\\p{Cntrl}", " ").trim();
+        // Control characters and invisible format characters (right-to-left overrides, zero-width
+        // spaces...) are removed, so text can't be made to look like something else.
+        String clean = text == null ? "" : text.replaceAll("§.?", "").replaceAll("\\p{Cntrl}", " ").replaceAll("\\p{Cf}", "").trim();
         return clean.length() > maxLength ? clean.substring(0, maxLength) : clean;
     }
 
@@ -59,10 +61,22 @@ public final class ChatDisplay {
      */
     public static void message(String label, ChatFormatting color, String author, Integer authorRgb, Integer textRgb,
                                String message, List<Media> emojis, List<Media> images) {
+        message(label, color, author, null, authorRgb, textRgb, message, emojis, images);
+    }
+
+    /** replyTo: who a Discord reply was to ("Steve" or "@someone"), shown like the old bridge bot. */
+    public static void message(String label, ChatFormatting color, String author, String replyTo, Integer authorRgb, Integer textRgb,
+                               String message, List<Media> emojis, List<Media> images) {
         MutableComponent name = Component.literal(safe(author, 32));
         name = authorRgb == null ? name.withStyle(ChatFormatting.WHITE) : name.withStyle((s) -> s.withColor(authorRgb));
         Style textStyle = textRgb == null ? Style.EMPTY.withColor(ChatFormatting.GRAY) : Style.EMPTY.withColor(textRgb);
-        MutableComponent line = tag(label, color).append(name).append(Component.literal(":").withStyle(textStyle));
+        MutableComponent line = tag(label, color).append(name);
+        String target = safe(replyTo, 33);
+        if (!target.isEmpty()) {
+            line.append(Component.literal(" replied to ").withStyle(ChatFormatting.GRAY))
+                    .append(Component.literal(target).withStyle(ChatFormatting.WHITE));
+        }
+        line.append(Component.literal(":").withStyle(textStyle));
 
         // Split the text at each ":name:" of a custom emoji in this message.
         Map<String, Integer> emojiIds = new HashMap<>();

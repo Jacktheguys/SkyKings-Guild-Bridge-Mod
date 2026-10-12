@@ -41,6 +41,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static boolean onHypixel;
     private static boolean openScreenNextTick;
     private static MediaStore.Loaded openImageNextTick;
+    private static GearScreen openGearNextTick;
     private static long guildToggleSentAt; // when the player last sent /g toggle
 
     public static BridgeConnection connection() {
@@ -153,6 +154,10 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 guildToggleSentAt = 0;
                 setGuildChatVisible(!BridgeConfig.get().guildChatVisible);
             }
+            if (openGearNextTick != null) {
+                ScreenAccess.setScreen(client, openGearNextTick);
+                openGearNextTick = null;
+            }
             if (openImageNextTick != null) {
                 ScreenAccess.setScreen(client, new ImageScreen(openImageNextTick));
                 openImageNextTick = null;
@@ -211,6 +216,14 @@ public final class GuildBridgeMod implements ClientModInitializer {
                             .executes(ctx -> taskAction(ctx, "task_claim"))))
                     .then(literal("dismiss").then(argument("id", LongArgumentType.longArg(1))
                             .executes(ctx -> taskAction(ctx, "task_cancel")))));
+            // /gpv [player] [profile]: the profile viewer's Gear tab (skykings.net/profilestats), in-game.
+            dispatcher.register(literal("gpv")
+                    .executes(ctx -> openGear(ctx.getSource(), Minecraft.getInstance().getUser().getName(), null))
+                    .then(argument("player", StringArgumentType.word())
+                            .executes(ctx -> openGear(ctx.getSource(), StringArgumentType.getString(ctx, "player"), null))
+                            .then(argument("profile", StringArgumentType.word())
+                                    .executes(ctx -> openGear(ctx.getSource(), StringArgumentType.getString(ctx, "player"),
+                                            StringArgumentType.getString(ctx, "profile"))))));
             dispatcher.register(literal("bc").then(argument("message", StringArgumentType.greedyString())
                     .executes(ctx -> sendIfReady(ctx, "bridge_chat", Map.of("message", StringArgumentType.getString(ctx, "message"))))));
         });
@@ -227,6 +240,13 @@ public final class GuildBridgeMod implements ClientModInitializer {
         MediaStore.Loaded image = MediaStore.open(id);
         if (image == null) return reply(source, "That picture is too old to open now.");
         openImageNextTick = image;
+        return 1;
+    }
+
+    private static int openGear(FabricClientCommandSource source, String player, String profile) {
+        if (!player.matches("[A-Za-z0-9_]{1,16}")) return reply(source, "That isn't a Minecraft name.");
+        if (profile != null && !profile.matches("[A-Za-z]{1,20}")) return reply(source, "That isn't a profile name (like Peach or Apple).");
+        openGearNextTick = GearScreen.load(player, profile);
         return 1;
     }
 
@@ -279,6 +299,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static int taskAction(CommandContext<FabricClientCommandSource> ctx, String type) {
         long id = LongArgumentType.getLong(ctx, "id");
         if (!StaffTasks.isOpen(id)) return reply(ctx.getSource(), "That task is already done or was taken by someone else.");
+        if (type.equals("task_claim")) StaffTasks.askedToClaim(id); // only a claim we asked for runs a command
         return sendIfReady(ctx, type, Map.of("id", id));
     }
 
@@ -289,6 +310,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 "/gbridge colour <colour> - your name colour for other mod users (#rrggbb for patrons)",
                 "/gbridge textcolour <discord|bridge|bot> <colour> - message text colours",
                 "/bc <message> - talk to Discord and mod users only (not in guild chat)",
+                "/gpv [player] [profile] - a player's gear, like skykings.net/profilestats",
                 "/gbridge status - connection status",
                 "/gbridge online - who's online with the mod",
                 "/gbridge show <discord|bridge|bot> - hide or show those messages",

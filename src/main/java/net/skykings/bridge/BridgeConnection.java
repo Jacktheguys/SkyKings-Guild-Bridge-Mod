@@ -36,7 +36,9 @@ import java.util.regex.Pattern;
  */
 public final class BridgeConnection implements WebSocket.Listener {
     // Must match the bridge server (it builds the same server id to check with Mojang).
-    private static final String ID_PREFIX = "skykings-guild-bridge-v1";
+    // v2 also hashes in the host the mod connected to (and checked the TLS certificate of), so
+    // a different server can't pass its challenge on to the real bridge and sign in as you there.
+    private static final String ID_PREFIX = "skykings-guild-bridge-v2";
     private static final Pattern NONCE = Pattern.compile("^[0-9a-f]{32}$");
     private static final Gson GSON = new Gson();
 
@@ -54,9 +56,18 @@ public final class BridgeConnection implements WebSocket.Listener {
     private volatile boolean wanted;      // should we be connected right now?
     private volatile boolean ready;       // signed in
     private volatile boolean configured;  // guild linked to Discord
+    private volatile boolean challenged;  // this connection already got its (one) sign-in challenge
+    private volatile String connectedHost = "";
     private volatile String closeReason;
     private CompletableFuture<WebSocket> sending = CompletableFuture.completedFuture(null);
     private int failures;
+
+    // Short drops (the website or bridge server restarting) are reconnected quietly:
+    // chat only hears about it if the bridge is still down after DROP_NOTICE_SECONDS.
+    private static final long DROP_NOTICE_SECONDS = 20;
+    private volatile boolean greeted;      // "Connected to ...'s bridge" was shown this Hypixel session
+    private volatile long droppedAt;       // when a signed-in connection dropped (0 = not dropped)
+    private volatile boolean dropAnnounced;
 
     public boolean isReady() {
         return ready;
@@ -108,6 +119,7 @@ public final class BridgeConnection implements WebSocket.Listener {
         }
         closeReason = null;
         connecting = true;
+        connectedHost = uri.getHost() == null ? "" : uri.getHost().toLowerCase(java.util.Locale.ROOT);
         http.newWebSocketBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .buildAsync(uri, this)
@@ -134,6 +146,10 @@ public final class BridgeConnection implements WebSocket.Listener {
         WebSocket ws = socket;
         if (ws != null) ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
         reset();
+        StaffTasks.clear();
+        greeted = false;
+        droppedAt = 0;
+        dropAnnounced = false;
     }
 
     public synchronized void reconnect() {
@@ -147,18 +163,30 @@ public final class BridgeConnection implements WebSocket.Listener {
         ready = false;
         configured = false;
         partial.setLength(0);
-        StaffTasks.clear();
+        // Staff tasks stay listed through a quick reconnect (the server sends the open ones again, without repeats).
     }
 
     private synchronized void scheduleReconnect() {
+        boolean wasReady = ready;
         reset();
         if (!wanted) return;
         failures++;
-        // 5s, 10s, 20s ... up to 5 minutes; longer still if the server refused us.
-        long delay = closeReason != null ? 300 : Math.min(300, 5L << Math.min(failures - 1, 6));
+        if (wasReady && droppedAt == 0) {
+            droppedAt = System.currentTimeMillis();
+            scheduler.schedule(this::announceIfStillDown, DROP_NOTICE_SECONDS, TimeUnit.SECONDS);
+        }
+        // 1s, then 5s, 10s, 20s ... up to 5 minutes; 5 minutes if the server refused us.
+        long delay = closeReason != null ? 300 : failures == 1 ? 1 : Math.min(300, 5L << Math.min(failures - 2, 6));
         scheduler.schedule(() -> {
             if (wanted) connect();
         }, delay, TimeUnit.SECONDS);
+    }
+
+    private void announceIfStillDown() {
+        if (wanted && !ready && droppedAt != 0 && !dropAnnounced) {
+            dropAnnounced = true;
+            ChatDisplay.system("Lost connection to the bridge, reconnecting...");
+        }
     }
 
     /** Send a message to the server (thread-safe; ignored if not signed in, except during sign-in). */
@@ -181,6 +209,7 @@ public final class BridgeConnection implements WebSocket.Listener {
     public void onOpen(WebSocket webSocket) {
         synchronized (this) {
             socket = webSocket;
+            challenged = false;
         }
         webSocket.request(1);
     }
@@ -209,11 +238,10 @@ public final class BridgeConnection implements WebSocket.Listener {
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
         if (!isCurrent(webSocket)) return null;
+        GuildBridgeMod.LOG.info("Bridge connection closed: {} {}", statusCode, reason);
         if (statusCode == 4000 && reason != null && !reason.isEmpty()) {
             closeReason = reason;
             ChatDisplay.system("Disconnected: " + reason);
-        } else if (ready) {
-            ChatDisplay.system("Lost connection to the bridge, reconnecting...");
         }
         scheduleReconnect();
         return null;
@@ -259,7 +287,13 @@ public final class BridgeConnection implements WebSocket.Listener {
         if (type == null) return;
         BridgeConfig cfg = BridgeConfig.get();
         switch (type) {
-            case "challenge" -> signIn(str(msg, "nonce"));
+            case "challenge" -> {
+                // One sign-in per connection: a server repeating challenges could otherwise
+                // make the mod ask Mojang again and again.
+                if (challenged || ready) return;
+                challenged = true;
+                signIn(str(msg, "nonce"));
+            }
             case "ready" -> onReady(msg);
             case "display" -> {
                 String kind = String.valueOf(str(msg, "kind"));
@@ -267,11 +301,12 @@ public final class BridgeConnection implements WebSocket.Listener {
                 String message = str(msg, "message");
                 boolean show = cfg.showBridgeLines(); // hidden while guild chat is toggled off
                 switch (kind) {
-                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
-                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
-                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.textRgb(cfg.bridgeTextColor, "white"), message); }
+                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, str(msg, "replyTo"), rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
+                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, str(msg, "replyTo"), rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
+                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge Chat", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.textRgb(cfg.bridgeTextColor, "white"), message); }
                     case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", null, NameColors.textRgb(cfg.botTextColor, "yellow"), message); }
-                    default -> ChatDisplay.system(message);
+                    case "system" -> ChatDisplay.system(message);
+                    default -> { } // unknown kinds aren't shown (they'd look like the mod's own messages)
                 }
             }
             case "online" -> {
@@ -305,6 +340,13 @@ public final class BridgeConnection implements WebSocket.Listener {
         boolean firstTime = !ready;
         ready = true;
         failures = 0;
+        boolean wasDropped = droppedAt != 0;
+        if (wasDropped) GuildBridgeMod.LOG.info("Bridge reconnected after {} ms", System.currentTimeMillis() - droppedAt);
+        droppedAt = 0;
+        if (dropAnnounced) {
+            dropAnnounced = false;
+            ChatDisplay.system("Reconnected to the bridge.");
+        }
         configured = msg.has("configured") && msg.get("configured").getAsBoolean();
         staff = msg.has("staff") && msg.get("staff").getAsBoolean();
         patron = msg.has("patron") && msg.get("patron").getAsBoolean();
@@ -323,6 +365,8 @@ public final class BridgeConnection implements WebSocket.Listener {
                     + "A Discord admin runs /bridge setup, then the Guild Master runs /gbridge claim <code>.");
             return;
         }
+        if (greeted) return; // a reconnect: they already know they're connected
+        greeted = true;
         JsonArray online = msg.has("online") ? msg.getAsJsonArray("online") : new JsonArray();
         ChatDisplay.system("Connected to " + guild + "'s bridge (" + online.size() + " online with the mod). /gbridge help");
     }
@@ -336,7 +380,7 @@ public final class BridgeConnection implements WebSocket.Listener {
         byte[] bytes = new byte[16];
         random.nextBytes(bytes);
         String clientNonce = HexFormat.of().formatHex(bytes);
-        String serverId = serverIdFor(serverNonce, clientNonce);
+        String serverId = serverIdFor(connectedHost, serverNonce, clientNonce);
 
         // joinServer is a blocking web request to Mojang: keep it off the game and socket threads.
         scheduler.execute(() -> {
@@ -354,6 +398,7 @@ public final class BridgeConnection implements WebSocket.Listener {
             Map<String, Object> auth = new HashMap<>();
             auth.put("username", user.getName());
             auth.put("clientNonce", clientNonce);
+            auth.put("idVersion", 2); // the server id includes the host
             auth.put("version", GuildBridgeMod.version());
             auth.put("guildChatVisible", BridgeConfig.get().guildChatVisible);
             // So Discord can show whether you'll see messages typed there.
@@ -363,10 +408,10 @@ public final class BridgeConnection implements WebSocket.Listener {
         });
     }
 
-    static String serverIdFor(String serverNonce, String clientNonce) {
+    static String serverIdFor(String host, String serverNonce, String clientNonce) {
         try {
             MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-            byte[] hash = sha1.digest((ID_PREFIX + "|" + serverNonce + "|" + clientNonce).getBytes(StandardCharsets.UTF_8));
+            byte[] hash = sha1.digest((ID_PREFIX + "|" + host + "|" + serverNonce + "|" + clientNonce).getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);
         } catch (Exception e) {
             throw new IllegalStateException(e);

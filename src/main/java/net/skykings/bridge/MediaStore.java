@@ -42,6 +42,11 @@ public final class MediaStore {
     private static final int KEEP_TEXTURES = 8;   // pictures kept loaded
     private static final long RETRY_AFTER_MS = 15_000;
 
+    // Item pictures for /gpv come from the SkyKings website's own image routes, nothing else there.
+    public static final String SITE = "https://skykings.net";
+    private static final List<String> SITE_PATHS = List.of("/minecraft-item-image/", "/skyblock-head/", "/images/minecraft/");
+    private static final int KEEP_ICONS = 300;
+
     public record Media(int id, String name, String url) {}
 
     /** A picture being opened: loading, loaded (texture set) or failed (error set). */
@@ -86,6 +91,71 @@ public final class MediaStore {
         }
     }
 
+    /** An item picture on the SkyKings website (https, skykings.net, image routes only). */
+    public static boolean allowedSite(String url) {
+        try {
+            URI uri = URI.create(url);
+            String path = uri.getRawPath();
+            return "https".equals(uri.getScheme()) && "skykings.net".equalsIgnoreCase(uri.getHost()) && uri.getPort() == -1
+                    && uri.getRawUserInfo() == null && uri.getRawQuery() == null && uri.getRawFragment() == null
+                    && path != null && !path.contains("..") && SITE_PATHS.stream().anyMatch(path::startsWith);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private static final Map<String, Loaded> ICONS = new LinkedHashMap<>(64, 0.75f, true); // most recently used last
+    private static int nextIcon = 1;
+
+    /**
+     * An item picture for the /gpv screen (path on skykings.net, e.g. "/minecraft-item-image/HYPERION"),
+     * downloaded once and kept while it's in use. tint: dyed leather colour (RGB), or null.
+     */
+    public static synchronized Loaded icon(String path, Integer tint) {
+        if (path == null) return null;
+        String url = SITE + path;
+        String key = url + "|" + tint;
+        Loaded existing = ICONS.get(key);
+        if (existing != null && (existing.error == null || System.currentTimeMillis() - existing.failedAt < RETRY_AFTER_MS * 4)) return existing;
+        Loaded loading = new Loaded(new Media(-(nextIcon++), "icon", url));
+        ICONS.put(key, loading);
+        download(url, 512 * 1024, 512).whenComplete((image, error) -> {
+            if (error != null) {
+                loading.error = "x";
+                loading.failedAt = System.currentTimeMillis();
+                return;
+            }
+            if (tint != null) tintImage(image, tint);
+            Minecraft.getInstance().execute(() -> uploadIcon(loading, image));
+        });
+        while (ICONS.size() > KEEP_ICONS) {
+            Loaded old = ICONS.remove(ICONS.keySet().iterator().next());
+            if (old.texture != null) Minecraft.getInstance().getTextureManager().release(old.texture);
+        }
+        return loading;
+    }
+
+    private static synchronized void uploadIcon(Loaded loading, NativeImage image) {
+        Identifier texture = Identifier.fromNamespaceAndPath("skykings_bridge", "icon/" + (-loading.media.id()));
+        Minecraft.getInstance().getTextureManager().register(texture, new DynamicTexture(() -> "skykings_bridge icon", image));
+        loading.width = image.getWidth();
+        loading.height = image.getHeight();
+        loading.texture = texture;
+        if (!ICONS.containsValue(loading)) Minecraft.getInstance().getTextureManager().release(texture); // evicted while loading
+    }
+
+    /** Dyed leather: the website's leather pictures are grey, coloured by multiplying. */
+    private static void tintImage(NativeImage image, int rgb) {
+        int tr = (rgb >> 16) & 0xFF, tg = (rgb >> 8) & 0xFF, tb = rgb & 0xFF;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                int p = image.getPixel(x, y);
+                int r = ((p >> 16) & 0xFF) * tr / 255, g = ((p >> 8) & 0xFF) * tg / 255, b = (p & 0xFF) * tb / 255;
+                image.setPixel(x, y, (p & 0xFF000000) | (r << 16) | (g << 8) | b);
+            }
+        }
+    }
+
     /** Remembers a picture; returns its number, or 0 if the address isn't allowed. */
     public static synchronized int add(String name, String url) {
         if (url == null || !allowed(url)) return 0;
@@ -124,25 +194,44 @@ public final class MediaStore {
      * readable message) for other addresses, big files, huge dimensions or non-images.
      */
     public static CompletableFuture<NativeImage> download(String url, int maxBytes, int maxSide) {
-        if (!allowed(url)) return CompletableFuture.failedFuture(new IOException("That address isn't allowed."));
+        return download(url, maxBytes, maxSide, 3);
+    }
+
+    // Redirects are followed by hand, and only to another allowed address (pet pictures
+    // on the website redirect to a head picture there).
+    private static CompletableFuture<NativeImage> download(String url, int maxBytes, int maxSide, int redirectsLeft) {
+        if (!allowed(url) && !allowedSite(url)) return CompletableFuture.failedFuture(new IOException("That address isn't allowed."));
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(15))
                 .header("User-Agent", "SkyKings-Guild-Bridge")
                 .GET().build();
-        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).thenApply((response) -> {
-            try (InputStream body = response.body()) {
-                if (response.statusCode() != 200) throw new IOException("Discord said " + response.statusCode() + " (the link may have expired).");
-                long declared = response.headers().firstValueAsLong("content-length").orElse(-1);
-                if (declared > maxBytes) throw new IOException("It's too big to show.");
-                byte[] bytes = body.readNBytes(maxBytes + 1);
-                if (bytes.length > maxBytes) throw new IOException("It's too big to show.");
-                NativeImage image = decode(bytes, maxSide);
-                if (image == null) throw new IOException("That image can't be shown.");
-                return image;
-            } catch (IOException e) {
-                throw new java.util.concurrent.CompletionException(e);
+        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).thenCompose((response) -> {
+            int status = response.statusCode();
+            if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && redirectsLeft > 0) {
+                try (InputStream ignored = response.body()) {
+                    String next = response.headers().firstValue("location").map((l) -> URI.create(url).resolve(l).toString()).orElse("");
+                    return download(next, maxBytes, maxSide, redirectsLeft - 1);
+                } catch (IOException | IllegalArgumentException e) {
+                    return CompletableFuture.failedFuture(new IOException("Bad redirect."));
+                }
             }
+            return CompletableFuture.completedFuture(readImage(response, maxBytes, maxSide));
         });
+    }
+
+    private static NativeImage readImage(HttpResponse<InputStream> response, int maxBytes, int maxSide) {
+        try (InputStream body = response.body()) {
+            if (response.statusCode() != 200) throw new IOException("The server said " + response.statusCode() + " (the link may have expired).");
+            long declared = response.headers().firstValueAsLong("content-length").orElse(-1);
+            if (declared > maxBytes) throw new IOException("It's too big to show.");
+            byte[] bytes = body.readNBytes(maxBytes + 1);
+            if (bytes.length > maxBytes) throw new IOException("It's too big to show.");
+            NativeImage image = decode(bytes, maxSide);
+            if (image == null) throw new IOException("That image can't be shown.");
+            return image;
+        } catch (IOException e) {
+            throw new java.util.concurrent.CompletionException(e);
+        }
     }
 
     private static synchronized void upload(int id, Loaded loading, NativeImage image) {

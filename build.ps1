@@ -13,11 +13,22 @@ $ErrorActionPreference = "Stop"
 $tools = Join-Path $PSScriptRoot "tools"
 $jdk = Join-Path $tools "jdk-25"
 
+# One exact JDK build, checked against its published SHA-256 before it's unpacked
+# (https://github.com/adoptium/temurin25-binaries/releases). To move to a newer one,
+# change both lines from that release's .zip and .zip.sha256.txt.
+$jdkUrl = "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
+$jdkSha256 = "00c847d804f4a78e9f04f2683faf14fed898535b177b7fc704486cb0284e9283"
+
 if (-not (Test-Path (Join-Path $jdk "bin\java.exe"))) {
-    Write-Host "Downloading JDK 25 (Temurin)..." -ForegroundColor Cyan
+    Write-Host "Downloading JDK 25 (Temurin 25.0.4.1+1)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $tools | Out-Null
     $zip = Join-Path $tools "jdk25.zip"
-    Invoke-WebRequest -Uri "https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk" -OutFile $zip -UseBasicParsing
+    Invoke-WebRequest -Uri $jdkUrl -OutFile $zip -UseBasicParsing
+    $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+    if ($actual -ne $jdkSha256) {
+        Remove-Item $zip
+        throw "The JDK download doesn't match its published checksum (got $actual). Not using it."
+    }
     Expand-Archive -Path $zip -DestinationPath $tools -Force
     Remove-Item $zip
     $extracted = Get-ChildItem $tools -Directory | Where-Object { $_.Name -like "jdk-25*" -and $_.Name -ne "jdk-25" } | Select-Object -First 1

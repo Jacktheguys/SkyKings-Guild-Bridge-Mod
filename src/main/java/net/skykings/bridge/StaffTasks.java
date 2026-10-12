@@ -33,6 +33,11 @@ public final class StaffTasks {
     }
 
     private static final Map<Long, Task> open = new LinkedHashMap<>();
+    // Tasks this player pressed [Run] + Enter for, and when. A "task_claimed" from the
+    // server only runs a command if it matches one of these (asked in the last 10s), so a
+    // hacked or fake server can never make anyone run a staff command by itself.
+    private static final Map<Long, Long> claimAsked = new LinkedHashMap<>();
+    private static final long CLAIM_ANSWER_MS = 10_000;
     private static Task running;
     private static long runningSince;
     private static final List<String> resultLines = new ArrayList<>();
@@ -56,7 +61,14 @@ public final class StaffTasks {
         }
     }
 
+    /** The player ran /gbridge run <id>: the only thing that lets a claim run a command. */
+    public static synchronized void askedToClaim(long id) {
+        claimAsked.put(id, System.currentTimeMillis());
+        while (claimAsked.size() > 50) claimAsked.remove(claimAsked.keySet().iterator().next());
+    }
+
     public static synchronized void add(Task task) {
+        if (!GuildBridgeMod.connection().isStaff()) return; // tasks are for guild staff only
         if (buildCommand(task.action(), task.target(), task.extra()) == null) return; // never show what we wouldn't run
         if (open.put(task.id(), task) != null) return; // already shown
         ChatDisplay.show(Component.literal("[Bridge] ").withStyle(ChatFormatting.GOLD)
@@ -84,17 +96,24 @@ public final class StaffTasks {
 
     public static synchronized void clear() {
         open.clear();
+        claimAsked.clear();
         running = null;
     }
 
     /**
      * The server gave us the task (no other staff member took it first): run
-     * it now, because the player just asked to. The command is rebuilt from
-     * the task we showed them; the server's copy is never used.
+     * it now, because the player just asked to. Ignored unless this player ran
+     * /gbridge run for this task in the last few seconds. The command is rebuilt
+     * from the task we showed them; the server's copy is never used.
      */
     public static void claimed(long id) {
         Task task;
         synchronized (StaffTasks.class) {
+            Long asked = claimAsked.remove(id);
+            if (asked == null || System.currentTimeMillis() - asked > CLAIM_ANSWER_MS) {
+                GuildBridgeMod.LOG.warn("Ignored a staff task claim the player didn't ask for (task {})", id);
+                return;
+            }
             task = open.remove(id);
         }
         if (task == null) return;
@@ -114,20 +133,48 @@ public final class StaffTasks {
         });
     }
 
-    // Hypixel's replies to /g commands are system lines about the player, or
-    // errors starting like these. Anything else (DMs, party chat, other
-    // players talking) is never reported, so it can't leak into Discord.
-    private static final Pattern REPLY_ERROR = Pattern.compile(
-            "^(You |You're |That player |This player |Can't |Cannot |Couldn't |Invalid |Unknown |Usage: |There is no ).{0,150}$");
-    private static final Pattern CHAT_LINE = Pattern.compile(
-            "^(From |To |Party > |Guild > |Officer > |Co-op > |\\[NPC\\] |\\[\\d+\\] )|^(\\[[A-Z+]+\\] )?[A-Za-z0-9_]{1,16}: ");
+    // Only Hypixel's own replies to the /g command just run are reported: the
+    // exact success line for that action, or one of its known error lines.
+    // Anything else (party invites, friend joins, purchases, DMs, other chat)
+    // never matches, so nothing else from your chat can reach Discord.
+    private static final String RANK = "(\\[[A-Z+]+\\] )?";
+
+    private static List<Pattern> replyPatterns(Task task) {
+        String t = Pattern.quote(task.target());
+        String who = RANK + "[A-Za-z0-9_]{1,16}";
+        List<Pattern> p = new ArrayList<>();
+        switch (task.action()) {
+            case "promote" -> p.add(Pattern.compile("^" + RANK + t + " was promoted from [A-Za-z0-9 ]{1,32} to [A-Za-z0-9 ]{1,32}$", Pattern.CASE_INSENSITIVE));
+            case "demote" -> p.add(Pattern.compile("^" + RANK + t + " was demoted from [A-Za-z0-9 ]{1,32} to [A-Za-z0-9 ]{1,32}$", Pattern.CASE_INSENSITIVE));
+            case "kick" -> p.add(Pattern.compile("^" + RANK + t + " was kicked from the guild by " + who + "!?$", Pattern.CASE_INSENSITIVE));
+            case "invite" -> {
+                p.add(Pattern.compile("^You invited " + RANK + t + " to your guild\\..{0,80}$", Pattern.CASE_INSENSITIVE));
+                p.add(Pattern.compile("^You sent an offline invite to " + RANK + t + "!.{0,100}$", Pattern.CASE_INSENSITIVE));
+            }
+            case "mute" -> p.add(Pattern.compile("^" + who + " has muted " + RANK + t + " for [0-9a-z ]{1,20}$", Pattern.CASE_INSENSITIVE));
+            case "unmute" -> p.add(Pattern.compile("^" + who + " has unmuted " + RANK + t + "$", Pattern.CASE_INSENSITIVE));
+            default -> { }
+        }
+        // Errors about this player, and Hypixel's permission errors for /g commands.
+        p.add(Pattern.compile("^" + RANK + t + " is (already|not) [A-Za-z' ]{1,50}[.!]?$", Pattern.CASE_INSENSITIVE));
+        p.add(Pattern.compile("^Can't find a player by the name of '" + t + "'\\.?$", Pattern.CASE_INSENSITIVE));
+        p.add(Pattern.compile("^(You do not have permission to use this command!|Your rank does not have permission to use this!"
+                + "|You must be the Guild Master to use that command!|You're not in a guild!|You must be in a guild to use this command!"
+                + "|You cannot (kick|demote|promote|mute) yourself( from the guild)?!"
+                + "|This player is already muted!|This player is not muted!|You cannot invite this player to your guild!)$"));
+        return p;
+    }
 
     /** Collect Hypixel's reply to the command we just ran, to report back to Discord. */
     public static void onChatLine(String line) {
         synchronized (StaffTasks.class) {
-            if (running == null || resultLines.size() >= 3 || CHAT_LINE.matcher(line).find()) return;
-            boolean aboutTarget = line.toLowerCase().contains(running.target().toLowerCase()) && line.length() <= 150;
-            if (aboutTarget || REPLY_ERROR.matcher(line).matches()) resultLines.add(line);
+            if (running == null || resultLines.size() >= 3 || line.length() > 150) return;
+            for (Pattern p : replyPatterns(running)) {
+                if (p.matcher(line).matches()) {
+                    resultLines.add(line);
+                    return;
+                }
+            }
         }
     }
 

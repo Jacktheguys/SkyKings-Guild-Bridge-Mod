@@ -213,7 +213,7 @@ public final class BridgeScreen extends Screen {
                         () -> cfg.nameColor, (c) -> GuildBridgeMod.setNameColor(c)),
                 new ColorRow("Discord message colour", "Text of [Discord] messages in your chat", textChoices,
                         () -> cfg.discordTextColor, (c) -> { cfg.discordTextColor = c; BridgeConfig.save(); }),
-                new ColorRow("Bridge chat colour", "Text of [Bridge] (/bc) messages", textChoices,
+                new ColorRow("Bridge chat colour", "Text of [Bridge Chat] (/bc) messages", textChoices,
                         () -> cfg.bridgeTextColor, (c) -> { cfg.bridgeTextColor = c; BridgeConfig.save(); }),
                 new ColorRow("Bot reply colour", "Text of [Bot] answers to !nw and the rest", textChoices,
                         () -> cfg.botTextColor, (c) -> { cfg.botTextColor = c; BridgeConfig.save(); }));
@@ -414,6 +414,7 @@ public final class BridgeScreen extends Screen {
             {"/gbridge tasks", "staff tasks waiting for you"},
             {"/gbridge colour <colour>", "your name colour"},
             {"/gbridge textcolour", "discord|bridge|bot <colour>"},
+            {"/gpv [player] [profile]", "gear, like the profile viewer"},
             {"/gbridge reconnect", "sign in again"},
             {"#Guild chat, /bc or Discord"},
             {"!nw [player]", "networth"},

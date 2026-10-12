@@ -28,7 +28,9 @@ The mod doesn't send anything to Hypixel by itself: no automatic commands, no au
 only command it ever sends is a staff task (`/g promote <name>` and similar), and only after the
 player clicked `[Run]` and pressed Enter, one press, one command. `StaffTasks.java` also checks
 every staff command against a fixed allow-list (`/g promote|demote|invite|unmute|kick|mute`), so
-even a misbehaving server couldn't make it run anything else.
+even a misbehaving server couldn't make it run anything else. A command only runs when the
+server confirms a task this player asked to run in the last few seconds; the server can't make
+it run one on its own. Tasks are only shown to players the server says are guild staff.
 
 Hypixel doesn't publish a list of approved mods. This one only reads chat and shows messages on
 your own screen; use it at your own discretion.
@@ -38,13 +40,29 @@ your own screen; use it at your own discretion.
 - **Signing in:** the mod proves who you are the same way joining a Minecraft server does
   (`MojangJoin.java`, `BridgeConnection.serverIdFor`). Your login token is only ever sent to
   Mojang, by Minecraft's own code, never to the bridge. The one-time server id is a hash of a
-  fixed prefix and random values from both sides, so it can't be reused to join a real server as you.
+  fixed prefix, the host name the mod connected to (whose TLS certificate it checked), and
+  random values from both sides. So it can't be reused to join a real server as you, and another
+  server can't pass the bridge's sign-in on to you and sign in to the real bridge as you. The
+  mod answers one sign-in challenge per connection.
 - **Encrypted only:** the mod refuses `ws://` addresses except `localhost` (`BridgeConfig.serverUri`).
-- **What's sent:** guild chat lines (and officer chat for staff), guild event lines, your `/bc`
-  messages, your mod settings that affect what you see, and staff task results (only Hypixel's
-  reply to the command, never DMs or other chat). Nothing else from your chat is sent.
+  Only point it at a bridge server you trust: that server receives everything listed below.
+- **What's sent to the bridge server:**
+  - guild chat lines (and officer chat for staff) and guild event lines your game receives.
+    That includes what guild members **without** the mod say: everything said in guild chat
+    goes to Discord, the same as with a bridge bot. Guilds should tell their members.
+  - your `/bc` messages, your Minecraft name and UUID, and your mod settings that affect what you
+    see (e.g. Discord messages on/off, /g toggle state)
+  - staff task results: only Hypixel's own reply to the `/g` command that was just run (its
+    exact success or error line, matched in `StaffTasks.replyPatterns`), never other chat.
+  - like any website, the server sees your IP address, and since the mod connects while you're
+    on Hypixel, it knows when you're online there. Other mod users in your guild see that you're
+    online with the mod (`/gbridge online`), and Discord shows it next to your messages.
+- **Pictures:** Discord images, stickers and custom emojis are downloaded only from Discord's own
+  image servers (`MediaStore.allowed`), checked for size before decoding, and never saved or run.
 - **What's shown:** text from Discord and other players is shown as plain text; colour codes,
-  links, clickable commands and control characters are stripped (`ChatDisplay.safe`).
+  links, clickable commands, control characters and invisible formatting characters
+  (right-to-left overrides, zero-width spaces) are stripped (`ChatDisplay.safe`). The mod's own
+  messages are tagged `[Bridge]`; other players' `/bc` messages are tagged `[Bridge Chat]`.
 
 ## Minecraft versions
 

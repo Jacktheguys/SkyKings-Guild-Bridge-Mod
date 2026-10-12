@@ -15,7 +15,7 @@ public final class BridgeConfig {
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("skykings-guild-bridge.json");
     private static BridgeConfig instance;
 
-    /** Change this to use a different bridge server (e.g. one your guild hosts). */
+    /** The bridge server. Only change it to a server you trust: it receives your guild chat and signs you in. */
     public String serverUrl = "wss://skykings.net/bridge/ws";
     public boolean enabled = true;
     public boolean showDiscord = true;
