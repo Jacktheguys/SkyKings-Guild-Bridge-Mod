@@ -216,7 +216,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                             .executes(ctx -> taskAction(ctx, "task_claim"))))
                     .then(literal("dismiss").then(argument("id", LongArgumentType.longArg(1))
                             .executes(ctx -> taskAction(ctx, "task_cancel")))));
-            // /gpv [player] [profile]: the profile viewer's Gear tab (skykings.net/profilestats), in-game.
+            // /gpv [player] [profile]: skykings.net/profilestats in-game (fetched through the bridge).
             dispatcher.register(literal("gpv")
                     .executes(ctx -> openGear(ctx.getSource(), Minecraft.getInstance().getUser().getName(), null))
                     .then(argument("player", StringArgumentType.word())
@@ -310,7 +310,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 "/gbridge colour <colour> - your name colour for other mod users (#rrggbb for patrons)",
                 "/gbridge textcolour <discord|bridge|bot> <colour> - message text colours",
                 "/bc <message> - talk to Discord and mod users only (not in guild chat)",
-                "/gpv [player] [profile] - a player's gear, like skykings.net/profilestats",
+                "/gpv [player] [profile] - a player's profile stats, like skykings.net/profilestats",
                 "/gbridge status - connection status",
                 "/gbridge online - who's online with the mod",
                 "/gbridge show <discord|bridge|bot> - hide or show those messages",

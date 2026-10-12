@@ -102,6 +102,24 @@ public final class BridgeConnection implements WebSocket.Listener {
         return onlinePlayers;
     }
 
+    // /gpv answers, by request id (the screen that asked gets its answer).
+    private final Map<Integer, java.util.function.Consumer<JsonObject>> profileWaiting = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger nextProfileId = new java.util.concurrent.atomic.AtomicInteger(1);
+
+    /** Asks the bridge for a player's profile stats (/gpv); false if not signed in to the bridge. */
+    public boolean requestProfile(String player, String profile, java.util.function.Consumer<JsonObject> answer) {
+        if (!ready) return false;
+        int id = nextProfileId.getAndIncrement();
+        profileWaiting.put(id, answer);
+        if (profileWaiting.size() > 20) profileWaiting.remove(profileWaiting.keySet().iterator().next());
+        Map<String, Object> fields = new HashMap<>();
+        fields.put("id", id);
+        fields.put("player", player);
+        if (profile != null) fields.put("profile", profile);
+        send("profile_request", fields);
+        return true;
+    }
+
     /** Ask the server who's online; print = also show the list in chat (/gbridge online). */
     public void requestOnline(boolean print) {
         printNextOnlineList = print;
@@ -218,7 +236,7 @@ public final class BridgeConnection implements WebSocket.Listener {
     public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
         if (!isCurrent(webSocket)) return null;
         partial.append(data);
-        if (partial.length() > 64 * 1024) {
+        if (partial.length() > 512 * 1024) {
             webSocket.abort();
             return null;
         }
@@ -332,6 +350,10 @@ public final class BridgeConnection implements WebSocket.Listener {
             case "task_claimed" -> StaffTasks.claimed(msg.get("id").getAsLong());
             case "task_gone" -> StaffTasks.remove(msg.get("id").getAsLong());
             case "error" -> ChatDisplay.system(String.valueOf(str(msg, "message")));
+            case "profile" -> {
+                java.util.function.Consumer<JsonObject> answer = msg.has("id") ? profileWaiting.remove(msg.get("id").getAsInt()) : null;
+                if (answer != null) answer.accept(msg);
+            }
             default -> { }
         }
     }

@@ -414,7 +414,7 @@ public final class BridgeScreen extends Screen {
             {"/gbridge tasks", "staff tasks waiting for you"},
             {"/gbridge colour <colour>", "your name colour"},
             {"/gbridge textcolour", "discord|bridge|bot <colour>"},
-            {"/gpv [player] [profile]", "gear, like the profile viewer"},
+            {"/gpv [player] [profile]", "profile stats, like the website"},
             {"/gbridge reconnect", "sign in again"},
             {"#Guild chat, /bc or Discord"},
             {"!nw [player]", "networth"},
