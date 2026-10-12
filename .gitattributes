@@ -1,0 +1,5 @@
+# Shell scripts must keep Linux line endings.
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary

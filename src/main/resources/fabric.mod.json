@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "skykings-guild-bridge",
+  "version": "${version}",
+  "name": "SkyKings Guild Bridge",
+  "description": "Links your Hypixel guild chat with Discord without a bridge bot. Discord messages only appear on your own screen; the mod never sends chat or commands for you.",
+  "authors": ["SkyKings"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["net.skykings.bridge.GuildBridgeMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": ["~26.1", "~26.2", "~26.3"],
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
