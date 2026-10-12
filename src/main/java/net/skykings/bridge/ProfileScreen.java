@@ -757,8 +757,12 @@ public final class ProfileScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        lastEventClick = System.currentTimeMillis();
-        if (event.button() == 0 && click(event.x(), event.y())) return true;
+        // Only a click event that hit something stops the polled click below from also running:
+        // some clients send click events with positions that don't line up with the screen.
+        if (event.button() == 0 && click(event.x(), event.y())) {
+            lastEventClick = System.currentTimeMillis();
+            return true;
+        }
         return super.mouseClicked(event, doubleClick);
     }
 

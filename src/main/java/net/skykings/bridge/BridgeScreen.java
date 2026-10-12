@@ -589,9 +589,13 @@ public final class BridgeScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (event.button() == 0) {
             mouseDown = true;
-            lastEventClick = System.currentTimeMillis();
-            eventSinceRelease = true;
-            if (click(event.x(), event.y())) return true;
+            // Only a click event that hit something stops the polled click from also running:
+            // some clients send click events with positions that don't line up with the screen.
+            if (click(event.x(), event.y())) {
+                lastEventClick = System.currentTimeMillis();
+                eventSinceRelease = true;
+                return true;
+            }
         }
         return super.mouseClicked(event, doubleClick);
     }
