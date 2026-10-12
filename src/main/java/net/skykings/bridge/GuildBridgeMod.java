@@ -1,5 +1,6 @@
 package net.skykings.bridge;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -39,6 +40,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static final BridgeConnection CONNECTION = new BridgeConnection();
     private static boolean onHypixel;
     private static boolean openScreenNextTick;
+    private static MediaStore.Loaded openImageNextTick;
     private static long guildToggleSentAt; // when the player last sent /g toggle
 
     public static BridgeConnection connection() {
@@ -56,8 +58,12 @@ public final class GuildBridgeMod implements ClientModInitializer {
 
     /** Your name colour for other mod users ("none" to clear). */
     public static boolean setNameColor(String color) {
-        String c = color.toLowerCase();
-        if (!NameColors.CHOICES.contains(c)) return false;
+        String c = color.trim().toLowerCase();
+        if (!NameColors.CHOICES.contains(c) && !NameColors.isHex(c)) return false;
+        if (NameColors.isHex(c) && !CONNECTION.isPatron()) {
+            ChatDisplay.premiumNotice();
+            return true; // handled: told them about premium
+        }
         BridgeConfig.get().nameColor = c;
         BridgeConfig.save();
         CONNECTION.send("set_color", Map.of("color", c));
@@ -65,14 +71,22 @@ public final class GuildBridgeMod implements ClientModInitializer {
     }
 
     private static int setNameColor(FabricClientCommandSource source, String color) {
-        if (!setNameColor(color)) return reply(source, "Colours: " + String.join(", ", NameColors.CHOICES));
+        if (NameColors.isHex(color.trim()) && !CONNECTION.isPatron()) {
+            ChatDisplay.premiumNotice();
+            return 1;
+        }
+        if (!setNameColor(color)) return reply(source, "Colours: " + String.join(", ", NameColors.CHOICES) + ", or #rrggbb (patrons)");
         return reply(source, "none".equals(color.toLowerCase()) ? "Name colour cleared." : "Your name colour is now " + color.toLowerCase() + ".");
     }
 
     /** Text colour of [Discord], [Bridge] or [Bot] messages (only on your screen). */
     private static int setTextColor(FabricClientCommandSource source, String type, String color) {
-        String c = color.toLowerCase();
-        if (NameColors.rgb(c) == null) return reply(source, "Colours: " + String.join(", ", NameColors.CHOICES.subList(1, NameColors.CHOICES.size())));
+        String c = color.trim().toLowerCase();
+        if (NameColors.rgb(c) == null) return reply(source, "Colours: " + String.join(", ", NameColors.CHOICES.subList(1, NameColors.CHOICES.size())) + ", or #rrggbb (patrons)");
+        if (NameColors.isHex(c) && !CONNECTION.isPatron()) {
+            ChatDisplay.premiumNotice();
+            return 1;
+        }
         BridgeConfig cfg = BridgeConfig.get();
         switch (type.toLowerCase()) {
             case "discord" -> cfg.discordTextColor = c;
@@ -130,12 +144,18 @@ public final class GuildBridgeMod implements ClientModInitializer {
             if (onHypixel) onChatLine(GuildChatParser.strip(message.getString()));
         });
         ClientSendMessageEvents.COMMAND.register(GuildBridgeMod::onCommandSent);
+        ChatHover.register();
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             StaffTasks.tick();
+            EmojiFont.tick();
             if (guildToggleSentAt != 0 && System.currentTimeMillis() - guildToggleSentAt > 3000) {
                 // Hypixel's reply didn't say on or off: it flips, so flip.
                 guildToggleSentAt = 0;
                 setGuildChatVisible(!BridgeConfig.get().guildChatVisible);
+            }
+            if (openImageNextTick != null) {
+                ScreenAccess.setScreen(client, new ImageScreen(openImageNextTick));
+                openImageNextTick = null;
             }
             if (openScreenNextTick) {
                 openScreenNextTick = false;
@@ -165,7 +185,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                                 return builder.buildFuture();
                             })
                             .executes(ctx -> toggleShow(ctx.getSource(), StringArgumentType.getString(ctx, "what")))))
-                    .then(literal("colour").then(argument("colour", StringArgumentType.word())
+                    .then(literal("colour").then(argument("colour", StringArgumentType.greedyString())
                             .suggests((ctx, builder) -> {
                                 NameColors.CHOICES.forEach(builder::suggest);
                                 return builder.buildFuture();
@@ -176,13 +196,15 @@ public final class GuildBridgeMod implements ClientModInitializer {
                                 for (String s : new String[]{"discord", "bridge", "bot"}) builder.suggest(s);
                                 return builder.buildFuture();
                             })
-                            .then(argument("colour", StringArgumentType.word())
+                            .then(argument("colour", StringArgumentType.greedyString())
                                     .suggests((ctx, builder) -> {
                                         NameColors.CHOICES.subList(1, NameColors.CHOICES.size()).forEach(builder::suggest);
                                         return builder.buildFuture();
                                     })
                                     .executes(ctx -> setTextColor(ctx.getSource(), StringArgumentType.getString(ctx, "type"),
                                             StringArgumentType.getString(ctx, "colour"))))))
+                    .then(literal("view").then(argument("id", IntegerArgumentType.integer(1))
+                            .executes(ctx -> viewMedia(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "id")))))
                     .then(literal("claim").then(argument("code", StringArgumentType.word())
                             .executes(ctx -> sendIfReady(ctx, "claim_guild", Map.of("code", StringArgumentType.getString(ctx, "code"))))))
                     .then(literal("run").then(argument("id", LongArgumentType.longArg(1))
@@ -200,6 +222,14 @@ public final class GuildBridgeMod implements ClientModInitializer {
     }
 
     /** The settings screen opens on the next tick (the chat box closes right after a command). */
+    /** Opens a Discord image or emoji someone clicked in chat. */
+    private static int viewMedia(FabricClientCommandSource source, int id) {
+        MediaStore.Loaded image = MediaStore.open(id);
+        if (image == null) return reply(source, "That picture is too old to open now.");
+        openImageNextTick = image;
+        return 1;
+    }
+
     private static int openSettings() {
         if (CONNECTION.isReady()) CONNECTION.requestOnline(false); // fresh "online" count for the screen
         openScreenNextTick = true;
@@ -256,7 +286,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
         reply(source, "Guild chat is shared with your guild's Discord. Commands:");
         for (String line : new String[]{
                 "/gbridge - settings and every command, on one screen",
-                "/gbridge colour <colour> - your name colour for other mod users",
+                "/gbridge colour <colour> - your name colour for other mod users (#rrggbb for patrons)",
                 "/gbridge textcolour <discord|bridge|bot> <colour> - message text colours",
                 "/bc <message> - talk to Discord and mod users only (not in guild chat)",
                 "/gbridge status - connection status",

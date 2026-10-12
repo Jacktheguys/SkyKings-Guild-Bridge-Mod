@@ -72,6 +72,13 @@ public final class BridgeConnection implements WebSocket.Listener {
     private volatile java.util.List<String> onlinePlayers = java.util.List.of();
     private volatile boolean printNextOnlineList;
 
+    private volatile boolean patron;
+
+    /** A SkyKings patron (skykings.net/premium): can use custom hex colours. Known once signed in. */
+    public boolean isPatron() {
+        return patron;
+    }
+
     public boolean isStaff() {
         return ready && staff;
     }
@@ -229,6 +236,19 @@ public final class BridgeConnection implements WebSocket.Listener {
         return rgb == 0 ? null : rgb;
     }
 
+    /** [{name, url}] lists of Discord emojis/images (at most 20; bad entries skipped). */
+    private static java.util.List<ChatDisplay.Media> media(JsonObject json, String key) {
+        java.util.List<ChatDisplay.Media> list = new java.util.ArrayList<>();
+        if (!(json.get(key) instanceof JsonArray array)) return list;
+        for (JsonElement e : array) {
+            if (list.size() >= 20) break;
+            if (!(e instanceof JsonObject o)) continue;
+            String name = str(o, "name"), url = str(o, "url");
+            if (name != null && url != null) list.add(new ChatDisplay.Media(name, url));
+        }
+        return list;
+    }
+
     private static String str(JsonObject json, String key) {
         JsonElement e = json.get(key);
         return e == null || e.isJsonNull() ? null : e.getAsString();
@@ -247,10 +267,10 @@ public final class BridgeConnection implements WebSocket.Listener {
                 String message = str(msg, "message");
                 boolean show = cfg.showBridgeLines(); // hidden while guild chat is toggled off
                 switch (kind) {
-                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, rgbField(msg), NameColors.rgb(cfg.discordTextColor), message); }
-                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, rgbField(msg), NameColors.rgb(cfg.discordTextColor), message); }
-                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.rgb(cfg.bridgeTextColor), message); }
-                    case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", null, NameColors.rgb(cfg.botTextColor), message); }
+                    case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
+                    case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
+                    case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.textRgb(cfg.bridgeTextColor, "white"), message); }
+                    case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", null, NameColors.textRgb(cfg.botTextColor, "yellow"), message); }
                     default -> ChatDisplay.system(message);
                 }
             }
@@ -287,6 +307,7 @@ public final class BridgeConnection implements WebSocket.Listener {
         failures = 0;
         configured = msg.has("configured") && msg.get("configured").getAsBoolean();
         staff = msg.has("staff") && msg.get("staff").getAsBoolean();
+        patron = msg.has("patron") && msg.get("patron").getAsBoolean();
         guildName = ChatDisplay.safe(str(msg, "guild"), 40);
         JsonArray players = msg.has("online") ? msg.getAsJsonArray("online") : new JsonArray();
         java.util.List<String> names = new java.util.ArrayList<>();
@@ -294,7 +315,8 @@ public final class BridgeConnection implements WebSocket.Listener {
         onlinePlayers = names;
         if (!firstTime) return;
         String chosen = BridgeConfig.get().nameColor;
-        if (chosen != null && !"none".equals(chosen)) send("set_color", Map.of("color", chosen));
+        // A custom (hex) name colour is only sent while they're a patron; it comes back if they are again.
+        if (chosen != null && !"none".equals(chosen) && (patron || !NameColors.isHex(chosen))) send("set_color", Map.of("color", chosen));
         String guild = guildName;
         if (!configured) {
             ChatDisplay.system("Signed in, but " + guild + " isn't linked to Discord yet. "

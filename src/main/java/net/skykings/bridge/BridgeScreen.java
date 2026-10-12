@@ -2,6 +2,7 @@ package net.skykings.bridge;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -49,6 +50,9 @@ public final class BridgeScreen extends Screen {
     private boolean buttonWasDown = true; // assume held until seen released (no click on open)
     private static boolean loggedFallback;
     private boolean eventSinceRelease;    // a normal click event arrived during this press
+    private String editingHex;            // the colour row whose hex code is being typed (patrons), or null
+    private String hexBuffer = "";
+    private String hexNote;               // a short note under the colour rows (e.g. "join Hypixel first")
 
     // Layout, worked out each frame (the window can be resized)
     private int px, py, pw, ph, contentTop, contentBottom;
@@ -215,9 +219,11 @@ public final class BridgeScreen extends Screen {
                         () -> cfg.botTextColor, (c) -> { cfg.botTextColor = c; BridgeConfig.save(); }));
     }
 
-    /** Where each swatch of a row goes: {x, y} per choice, wrapping when the panel is narrow. */
+    private static final String CUSTOM = "#"; // the last swatch of every row: any hex colour (patrons)
+
+    /** Where each swatch of a row goes: {x, y} per choice (and the "#" one last), wrapping when the panel is narrow. */
     private int[][] swatchSpots(ColorRow row, int y) {
-        int[][] spots = new int[row.choices().size()][];
+        int[][] spots = new int[row.choices().size() + 1][];
         int x = px + 14;
         int sy = y + 30;
         for (int i = 0; i < spots.length; i++) {
@@ -233,7 +239,11 @@ public final class BridgeScreen extends Screen {
 
     private int rowHeight(ColorRow row, int y) {
         int[][] spots = swatchSpots(row, y);
-        return spots[spots.length - 1][1] + SWATCH - y + 10;
+        return spots[spots.length - 1][1] + SWATCH - y + 10 + (row.name().equals(editingHex) ? 22 : 0);
+    }
+
+    private String choiceAt(ColorRow row, int i) {
+        return i < row.choices().size() ? row.choices().get(i) : CUSTOM;
     }
 
     /** Every colour row, one under another; returns their total height. */
@@ -245,14 +255,27 @@ public final class BridgeScreen extends Screen {
             String chosen = row.get().get();
             int[][] spots = swatchSpots(row, y);
             for (int i = 0; i < spots.length; i++) {
-                String color = row.choices().get(i);
+                String color = choiceAt(row, i);
                 int x = spots[i][0], sy = spots[i][1];
                 boolean hover = inContent(mouseY) && inside(mouseX, mouseY, x - 2, sy - 2, SWATCH + 4, SWATCH + 4);
-                if (color.equals(chosen)) roundRect(g, x - 2, sy - 2, SWATCH + 4, SWATCH + 4, (SWATCH + 4) / 2, 0xFFFFFFFF);
-                Integer rgb = NameColors.rgb(color);
+                boolean custom = color.equals(CUSTOM);
+                boolean selected = custom ? NameColors.isHex(chosen) : color.equals(chosen);
+                if (selected) roundRect(g, x - 2, sy - 2, SWATCH + 4, SWATCH + 4, (SWATCH + 4) / 2, 0xFFFFFFFF);
+                Integer rgb = custom ? null : NameColors.rgb(color);
                 int grow = hover ? 1 : 0;
                 int size = SWATCH + grow * 2;
-                if (rgb == null) {
+                if (custom) {
+                    // "#": their custom colour, or a rainbow ring for "pick any colour"
+                    if (NameColors.isHex(chosen)) {
+                        roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF000000 | NameColors.rgb(chosen));
+                    } else {
+                        int[] rainbow = {0xFFFF5555, 0xFFFFAA00, 0xFFFFFF55, 0xFF55FF55, 0xFF55FFFF, 0xFF5555FF, 0xFFFF55FF};
+                        for (int k = 0; k < size; k++) g.fill(x - grow + k, sy - grow + 2, x - grow + k + 1, sy - grow + size - 2, rainbow[k * rainbow.length / size]);
+                    }
+                    g.centeredText(font, "#", x + SWATCH / 2 + 1, sy + 2, 0xFFFFFFFF);
+                    if (hover) g.setTooltipForNextFrame(font, Component.literal(GuildBridgeMod.connection().isPatron()
+                            ? "Any colour (#rrggbb)" : "Any colour: SkyKings patrons"), mouseX, mouseY);
+                } else if (rgb == null) {
                     // "none": a grey disc with a slash through it
                     roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF3A3E49);
                     for (int k = 2; k < SWATCH - 2; k++) g.fill(x + k, sy + SWATCH - 1 - k, x + k + 1, sy + SWATCH - k, MUTED);
@@ -260,9 +283,82 @@ public final class BridgeScreen extends Screen {
                     roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF000000 | rgb);
                 }
             }
+            if (row.name().equals(editingHex)) drawHexInput(g, spots[spots.length - 1][1] + SWATCH + 8);
             y += rowHeight(row, y);
         }
+        if (hexNote != null) {
+            g.text(font, ellipsize(hexNote, pw - 28), px + 14, y, AMBER, false);
+            y += 14;
+        }
         return y - top;
+    }
+
+    /** The hex code box: "#" + what's typed, a preview, and how to save. */
+    private void drawHexInput(GuiGraphicsExtractor g, int y) {
+        int x = px + 14;
+        roundRect(g, x, y, 70, 16, 4, 0xFF0B0C10);
+        boolean caret = (System.currentTimeMillis() / 500) % 2 == 0;
+        g.text(font, "#" + hexBuffer + (caret && hexBuffer.length() < 6 ? "_" : ""), x + 5, y + 4, TEXT, false);
+        Integer preview = hexBuffer.length() == 6 ? NameColors.rgb("#" + hexBuffer) : null;
+        roundRect(g, x + 76, y + 2, 12, 12, 6, preview == null ? 0xFF3A3E49 : 0xFF000000 | preview);
+        g.text(font, ellipsize("Type a hex code, Enter to save, Esc to cancel", pw - 28 - 96), x + 96, y + 4, MUTED, false);
+    }
+
+    /** The "#" swatch: patrons type a hex code; everyone else is shown the premium page. */
+    private void clickCustom(ColorRow row) {
+        BridgeConnection connection = GuildBridgeMod.connection();
+        hexNote = null;
+        if (!connection.isReady()) {
+            hexNote = "Join Hypixel first: custom colours are checked when the bridge connects.";
+            return;
+        }
+        if (!connection.isPatron()) {
+            hexNote = "Custom colours are for SkyKings patrons: skykings.net/premium";
+            ConfirmLinkScreen.confirmLinkNow(this, java.net.URI.create(ChatDisplay.PREMIUM_URL));
+            return;
+        }
+        editingHex = row.name();
+        String current = row.get().get();
+        hexBuffer = NameColors.isHex(current) ? current.substring(1).toUpperCase() : "";
+    }
+
+    private void saveHex() {
+        if (hexBuffer.length() != 6) return;
+        for (ColorRow row : colorRows()) {
+            if (row.name().equals(editingHex)) row.set().accept("#" + hexBuffer.toLowerCase());
+        }
+        editingHex = null;
+    }
+
+    // Key codes differ between versions (26.3 uses SDL), so they're read from the game, not written in.
+    private static int key(String name) {
+        try {
+            return com.mojang.blaze3d.platform.InputConstants.class.getField(name).getInt(null);
+        } catch (ReflectiveOperationException e) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        if (editingHex != null) {
+            int k = event.key();
+            if (k == key("KEY_ESCAPE")) editingHex = null;
+            else if (k == key("KEY_RETURN") || k == key("KEY_NUMPADENTER")) saveHex();
+            else if (k == key("KEY_BACKSPACE") && !hexBuffer.isEmpty()) hexBuffer = hexBuffer.substring(0, hexBuffer.length() - 1);
+            return true;
+        }
+        return super.keyPressed(event);
+    }
+
+    @Override
+    public boolean charTyped(net.minecraft.client.input.CharacterEvent event) {
+        if (editingHex == null) return super.charTyped(event);
+        String typed = event.codepointAsString().replace("#", "");
+        for (char c : typed.toCharArray()) {
+            if (hexBuffer.length() < 6 && Character.digit(c, 16) >= 0) hexBuffer += Character.toUpperCase(c);
+        }
+        return true;
     }
 
     /** Clicks on a swatch in any colour row: true if one was picked. */
@@ -271,7 +367,14 @@ public final class BridgeScreen extends Screen {
             int[][] spots = swatchSpots(row, y);
             for (int i = 0; i < spots.length; i++) {
                 if (inside(mx, my, spots[i][0] - 2, spots[i][1] - 2, SWATCH + 4, SWATCH + 4)) {
-                    row.set().accept(row.choices().get(i));
+                    String choice = choiceAt(row, i);
+                    if (choice.equals(CUSTOM)) {
+                        clickCustom(row);
+                    } else {
+                        editingHex = null;
+                        hexNote = null;
+                        row.set().accept(choice);
+                    }
                     return true;
                 }
             }

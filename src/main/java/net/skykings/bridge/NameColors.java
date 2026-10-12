@@ -11,8 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Name colours picked by guild members (sent by the bridge). Used to colour
- * their names in guild chat and /bc lines. Only these colours exist; the
- * server checks too.
+ * their names in guild chat and /bc lines: one of these colours, or any
+ * "#rrggbb" for SkyKings patrons (the server checks who's a patron).
  */
 final class NameColors {
     private NameColors() {}
@@ -32,9 +32,25 @@ final class NameColors {
 
     private static final Map<String, Integer> byName = new ConcurrentHashMap<>(); // lowercase name -> rgb
 
+    private static final java.util.regex.Pattern HEX = java.util.regex.Pattern.compile("^#[0-9a-fA-F]{6}$");
+
+    /** "#rrggbb": a custom colour (SkyKings patrons). */
+    static boolean isHex(String color) {
+        return color != null && HEX.matcher(color).matches();
+    }
+
     /** The colour's RGB, or null for "none" / anything unknown. */
     static Integer rgb(String color) {
-        return color == null ? null : RGB.get(color);
+        if (color == null) return null;
+        if (isHex(color)) return Integer.parseInt(color.substring(1), 16);
+        return RGB.get(color);
+    }
+
+    /** A message text colour setting: custom (hex) colours only count for patrons. */
+    static Integer textRgb(String color, String fallback) {
+        if (isHex(color) && !GuildBridgeMod.connection().isPatron()) return RGB.get(fallback);
+        Integer rgb = rgb(color);
+        return rgb != null ? rgb : RGB.get(fallback);
     }
 
     static Integer rgbOf(String player) {
