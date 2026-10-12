@@ -368,7 +368,7 @@ public final class ProfileScreen extends Screen {
         tiles.add(new Object[]{"wither_skeleton_skull", "CATACOMBS", String.valueOf((int) num(o, "catacombs")), 0xc49bff});
         tiles.add(new Object[]{"rotten_flesh", "SLAYER XP", fmt(num(o, "slayerXp")), 0xff7a7a});
         tiles.add(new Object[]{"diamond", "MAG. POWER", has(o, "magicalPower") ? full(num(o, "magicalPower")) : "-", 0x5cc8ff});
-        JsonObject souls = obj(o, "fairySouls");
+        JsonObject souls = obj(o, "fairySoulsCount"); // ("fairySouls" is the same as text, for older mods)
         tiles.add(new Object[]{"pink_dye", "FAIRY SOULS", souls == null ? "-" : (int) num(souls, "collected") + (has(souls, "max") ? "/" + (int) num(souls, "max") : ""), 0xff8fcf});
         tiles.add(new Object[]{"clock", "JOINED", has(o, "joined") ? age(num(o, "joined")) : "-", 0xa8d8a8});
         tiles.add(new Object[]{"bone", "PET SCORE", full(num(o, "petScore")), 0xffae5c});
