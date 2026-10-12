@@ -44,7 +44,7 @@ public final class MediaStore {
 
     // Item pictures for /gpv come from the SkyKings website's own image routes, nothing else there.
     public static final String SITE = "https://skykings.net";
-    private static final List<String> SITE_PATHS = List.of("/minecraft-item-image/", "/skyblock-head/", "/images/minecraft/");
+    private static final List<String> SITE_PATHS = List.of("/minecraft-item-image/", "/skyblock-head/", "/images/minecraft/", "/mc/mh/body/");
     private static final int KEEP_ICONS = 300;
 
     public record Media(int id, String name, String url) {}
@@ -79,7 +79,7 @@ public final class MediaStore {
             String path = uri.getRawPath(), host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
             boolean basic = "https".equals(uri.getScheme()) && HOSTS.contains(host)
                     && uri.getPort() == -1 && uri.getRawUserInfo() == null && uri.getRawFragment() == null
-                    && path != null && !path.contains("..") && !path.contains("%") && PATHS.stream().anyMatch(path::startsWith);
+                    && path != null && safePath(uri) && PATHS.stream().anyMatch(path::startsWith);
             if (!basic) return false;
             if (path.startsWith("/attachments/") || path.startsWith("/ephemeral-attachments/")) {
                 String query = "&" + (uri.getRawQuery() == null ? "" : uri.getRawQuery()) + "&";
@@ -98,7 +98,7 @@ public final class MediaStore {
             String path = uri.getRawPath();
             return "https".equals(uri.getScheme()) && "skykings.net".equalsIgnoreCase(uri.getHost()) && uri.getPort() == -1
                     && uri.getRawUserInfo() == null && uri.getRawQuery() == null && uri.getRawFragment() == null
-                    && path != null && !path.contains("..") && SITE_PATHS.stream().anyMatch(path::startsWith);
+                    && path != null && safePath(uri) && SITE_PATHS.stream().anyMatch(path::startsWith);
         } catch (IllegalArgumentException e) {
             return false;
         }
@@ -156,6 +156,12 @@ public final class MediaStore {
         }
     }
 
+    /** No ".." or backslashes, also once decoded (so "%2e%2e" can't sneak out of the allowed folders). */
+    private static boolean safePath(URI uri) {
+        String raw = uri.getRawPath(), decoded = uri.getPath();
+        return raw != null && decoded != null && !raw.contains("..") && !decoded.contains("..") && !decoded.contains("\\");
+    }
+
     /** Remembers a picture; returns its number, or 0 if the address isn't allowed. */
     public static synchronized int add(String name, String url) {
         if (url == null || !allowed(url)) return 0;
@@ -204,6 +210,7 @@ public final class MediaStore {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(15))
                 .header("User-Agent", "SkyKings-Guild-Bridge")
+                .header("Accept", "image/png,image/jpeg;q=0.9,image/gif;q=0.8") // no WebP: the game can't decode it
                 .GET().build();
         return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).thenCompose((response) -> {
             int status = response.statusCode();

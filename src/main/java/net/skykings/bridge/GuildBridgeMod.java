@@ -41,7 +41,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static boolean onHypixel;
     private static boolean openScreenNextTick;
     private static MediaStore.Loaded openImageNextTick;
-    private static GearScreen openGearNextTick;
+    private static ProfileScreen openGearNextTick;
     private static long guildToggleSentAt; // when the player last sent /g toggle
 
     public static BridgeConnection connection() {
@@ -246,7 +246,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static int openGear(FabricClientCommandSource source, String player, String profile) {
         if (!player.matches("[A-Za-z0-9_]{1,16}")) return reply(source, "That isn't a Minecraft name.");
         if (profile != null && !profile.matches("[A-Za-z]{1,20}")) return reply(source, "That isn't a profile name (like Peach or Apple).");
-        openGearNextTick = GearScreen.load(player, profile);
+        openGearNextTick = ProfileScreen.load(player, profile);
         return 1;
     }
 

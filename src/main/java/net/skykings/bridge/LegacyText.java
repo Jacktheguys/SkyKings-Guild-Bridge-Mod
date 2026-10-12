@@ -53,7 +53,7 @@ final class LegacyText {
 
     /** Without any § codes. */
     static String strip(String text) {
-        return text == null ? "" : text.replaceAll("§.?", "");
+        return text == null ? "" : text.replaceAll("§.?", "").replaceAll("\\p{Cntrl}", "").replaceAll("\\p{Cf}", "");
     }
 
     // The game's RGB for each code (ChatFormatting.getColor isn't on every supported version).

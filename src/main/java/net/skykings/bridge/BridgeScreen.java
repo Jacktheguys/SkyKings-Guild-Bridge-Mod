@@ -53,6 +53,12 @@ public final class BridgeScreen extends Screen {
     private String editingHex;            // the colour row whose hex code is being typed (patrons), or null
     private String hexBuffer = "";
     private String hexNote;               // a short note under the colour rows (e.g. "join Hypixel first")
+    // The colour picker (patrons): hue, saturation and brightness, 0..1; what's being dragged.
+    private float pickH, pickS = 1f, pickV = 1f;
+    private int dragging;                 // 0 nothing, 1 the colour square, 2 the hue strip
+    private boolean mouseDown;            // from click/release events (when the button can't be read directly)
+    private int pickerX = -1, pickerY = -1; // where the picker was drawn this frame
+    private static final int PICK_W = 132, PICK_H = 66, HUE_H = 8, PICKER_ROW_H = 96;
 
     // Layout, worked out each frame (the window can be resized)
     private int px, py, pw, ph, contentTop, contentBottom;
@@ -97,6 +103,7 @@ public final class BridgeScreen extends Screen {
         lastFrame = now;
         layout();
         pollClick(mouseX, mouseY);
+        followDrag(mouseX, mouseY);
 
         // Keep the online list fresh while it's showing.
         BridgeConnection connection = GuildBridgeMod.connection();
@@ -239,7 +246,7 @@ public final class BridgeScreen extends Screen {
 
     private int rowHeight(ColorRow row, int y) {
         int[][] spots = swatchSpots(row, y);
-        return spots[spots.length - 1][1] + SWATCH - y + 10 + (row.name().equals(editingHex) ? 22 : 0);
+        return spots[spots.length - 1][1] + SWATCH - y + 10 + (row.name().equals(editingHex) ? PICKER_ROW_H : 0);
     }
 
     private String choiceAt(ColorRow row, int i) {
@@ -283,7 +290,7 @@ public final class BridgeScreen extends Screen {
                     roundRect(g, x - grow, sy - grow, size, size, size / 2, 0xFF000000 | rgb);
                 }
             }
-            if (row.name().equals(editingHex)) drawHexInput(g, spots[spots.length - 1][1] + SWATCH + 8);
+            if (row.name().equals(editingHex)) drawPicker(g, spots[spots.length - 1][1] + SWATCH + 8, mouseX, mouseY);
             y += rowHeight(row, y);
         }
         if (hexNote != null) {
@@ -293,15 +300,125 @@ public final class BridgeScreen extends Screen {
         return y - top;
     }
 
-    /** The hex code box: "#" + what's typed, a preview, and how to save. */
-    private void drawHexInput(GuiGraphicsExtractor g, int y) {
+    /**
+     * The colour picker: a saturation/brightness square and a hue strip you drag across,
+     * a preview, the hex code (it can also be typed), and Save / Cancel.
+     */
+    private void drawPicker(GuiGraphicsExtractor g, int y, int mouseX, int mouseY) {
         int x = px + 14;
-        roundRect(g, x, y, 70, 16, 4, 0xFF0B0C10);
+        pickerX = x;
+        pickerY = y;
+        roundRect(g, x - 4, y - 4, pw - 20, PICKER_ROW_H - 4, 6, 0xFF0B0C10);
+        // Saturation (left to right) and brightness (top to bottom) for the current hue, in 3px cells.
+        int cell = 3;
+        for (int cx = 0; cx < PICK_W; cx += cell) {
+            for (int cy = 0; cy < PICK_H; cy += cell) {
+                int rgb = hsv(pickH, cx / (float) (PICK_W - cell), 1f - cy / (float) (PICK_H - cell));
+                g.fill(x + cx, y + cy, x + Math.min(PICK_W, cx + cell), y + Math.min(PICK_H, cy + cell), 0xFF000000 | rgb);
+            }
+        }
+        int mx = x + Math.round(pickS * (PICK_W - 1)), my = y + Math.round((1f - pickV) * (PICK_H - 1));
+        g.fill(mx - 3, my - 3, mx + 4, my - 2, 0xFFFFFFFF);
+        g.fill(mx - 3, my + 3, mx + 4, my + 4, 0xFFFFFFFF);
+        g.fill(mx - 3, my - 3, mx - 2, my + 4, 0xFFFFFFFF);
+        g.fill(mx + 3, my - 3, mx + 4, my + 4, 0xFFFFFFFF);
+        // Hue strip
+        int hy = y + PICK_H + 6;
+        for (int i = 0; i < PICK_W; i++) g.fill(x + i, hy, x + i + 1, hy + HUE_H, 0xFF000000 | hsv(i / (float) (PICK_W - 1), 1f, 1f));
+        int hx = x + Math.round(pickH * (PICK_W - 1));
+        g.fill(hx - 1, hy - 2, hx + 2, hy + HUE_H + 2, 0xFFFFFFFF);
+        // Preview, hex code and buttons
+        int rx = x + PICK_W + 12;
+        int rgb = hsv(pickH, pickS, pickV);
+        roundRect(g, rx, y, 28, 28, 6, 0xFF000000 | rgb);
+        g.text(font, Component.literal("Sample text").withStyle((st) -> st.withColor(rgb)), rx + 36, y + 4, TEXT, false);
+        g.text(font, "Drag to pick a colour", rx + 36, y + 16, MUTED, false);
+        roundRect(g, rx, y + 36, 70, 16, 4, 0xFF1C1E26);
         boolean caret = (System.currentTimeMillis() / 500) % 2 == 0;
-        g.text(font, "#" + hexBuffer + (caret && hexBuffer.length() < 6 ? "_" : ""), x + 5, y + 4, TEXT, false);
-        Integer preview = hexBuffer.length() == 6 ? NameColors.rgb("#" + hexBuffer) : null;
-        roundRect(g, x + 76, y + 2, 12, 12, 6, preview == null ? 0xFF3A3E49 : 0xFF000000 | preview);
-        g.text(font, ellipsize("Type a hex code, Enter to save, Esc to cancel", pw - 28 - 96), x + 96, y + 4, MUTED, false);
+        g.text(font, "#" + hexBuffer + (caret && hexBuffer.length() < 6 ? "_" : ""), rx + 5, y + 40, TEXT, false);
+        g.text(font, "or type it", rx + 76, y + 40, FAINT, false);
+        pill(g, "Save", rx, y + 58, 50, true, inside(mouseX, mouseY, rx, y + 58, 50, 18));
+        pill(g, "Cancel", rx + 56, y + 58, 56, false, inside(mouseX, mouseY, rx + 56, y + 58, 56, 18));
+    }
+
+    /** HSV (0..1) to RGB. (Not java.awt.Color: the game's Java may not include AWT.) */
+    private static int hsv(float h, float s, float v) {
+        s = Math.max(0f, Math.min(1f, s));
+        v = Math.max(0f, Math.min(1f, v));
+        float hh = (h - (float) Math.floor(h)) * 6f;
+        int sector = (int) hh;
+        float f = hh - sector, p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+        float r, g, b;
+        switch (sector) {
+            case 0 -> { r = v; g = t; b = p; }
+            case 1 -> { r = q; g = v; b = p; }
+            case 2 -> { r = p; g = v; b = t; }
+            case 3 -> { r = p; g = q; b = v; }
+            case 4 -> { r = t; g = p; b = v; }
+            default -> { r = v; g = p; b = q; }
+        }
+        return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+    }
+
+    /** RGB to {hue, saturation, brightness}, each 0..1. */
+    private static float[] toHsv(int rgb) {
+        float r = ((rgb >> 16) & 0xFF) / 255f, g = ((rgb >> 8) & 0xFF) / 255f, b = (rgb & 0xFF) / 255f;
+        float max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b)), d = max - min;
+        float h = 0;
+        if (d > 0) {
+            if (max == r) h = ((g - b) / d) % 6f;
+            else if (max == g) h = (b - r) / d + 2f;
+            else h = (r - g) / d + 4f;
+            h /= 6f;
+            if (h < 0) h += 1f;
+        }
+        return new float[]{h, max == 0 ? 0 : d / max, max};
+    }
+
+    private void setPickFromHex(String hex) {
+        Integer rgb = NameColors.rgb("#" + hex);
+        if (rgb == null) return;
+        float[] hsb = toHsv(rgb);
+        if (hsb[1] > 0.001f) pickH = hsb[0]; // greys keep the hue the strip was on
+        pickS = hsb[1];
+        pickV = hsb[2];
+    }
+
+    private void syncHexFromPick() {
+        hexBuffer = String.format(java.util.Locale.ROOT, "%06X", hsv(pickH, pickS, pickV));
+    }
+
+    /** A press on the picker: start dragging the square or the strip, or press Save / Cancel. */
+    private boolean clickPicker(double mx, double my) {
+        if (editingHex == null || pickerX < 0) return false;
+        int x = pickerX, y = pickerY, hy = y + PICK_H + 6, rx = x + PICK_W + 12;
+        if (inside(mx, my, x - 2, y - 2, PICK_W + 4, PICK_H + 4)) { dragging = 1; dragTo(mx, my); return true; }
+        if (inside(mx, my, x - 2, hy - 3, PICK_W + 4, HUE_H + 6)) { dragging = 2; dragTo(mx, my); return true; }
+        if (inside(mx, my, rx, y + 58, 50, 18)) { saveHex(); return true; }
+        if (inside(mx, my, rx + 56, y + 58, 56, 18)) { editingHex = null; return true; }
+        return inside(mx, my, x - 4, y - 4, pw - 20, PICKER_ROW_H - 4); // other clicks inside the picker do nothing
+    }
+
+    private void dragTo(double mx, double my) {
+        if (dragging == 1) {
+            pickS = (float) Math.max(0, Math.min(1, (mx - pickerX) / (PICK_W - 1)));
+            pickV = 1f - (float) Math.max(0, Math.min(1, (my - pickerY) / (PICK_H - 1)));
+        } else if (dragging == 2) {
+            pickH = (float) Math.max(0, Math.min(1, (mx - pickerX) / (PICK_W - 1)));
+        }
+        syncHexFromPick();
+    }
+
+    /** Every frame: keep following the mouse while the button is held after pressing on the picker. */
+    private void followDrag(int mouseX, int mouseY) {
+        if (dragging == 0) return;
+        Boolean polled = MouseButtons.leftDown();
+        boolean held = polled != null ? polled : mouseDown;
+        if (!held || editingHex == null) {
+            dragging = 0;
+            return;
+        }
+        dragTo(mouseX, mouseY);
     }
 
     /** The "#" swatch: patrons type a hex code; everyone else is shown the premium page. */
@@ -318,8 +435,9 @@ public final class BridgeScreen extends Screen {
             return;
         }
         editingHex = row.name();
-        String current = row.get().get();
-        hexBuffer = NameColors.isHex(current) ? current.substring(1).toUpperCase() : "";
+        Integer rgb = NameColors.rgb(row.get().get());
+        hexBuffer = String.format(java.util.Locale.ROOT, "%06X", rgb == null ? 0xFF5555 : rgb); // start from their current colour
+        setPickFromHex(hexBuffer);
     }
 
     private void saveHex() {
@@ -358,6 +476,7 @@ public final class BridgeScreen extends Screen {
         for (char c : typed.toCharArray()) {
             if (hexBuffer.length() < 6 && Character.digit(c, 16) >= 0) hexBuffer += Character.toUpperCase(c);
         }
+        if (hexBuffer.length() == 6) setPickFromHex(hexBuffer);
         return true;
     }
 
@@ -469,11 +588,21 @@ public final class BridgeScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (event.button() == 0) {
+            mouseDown = true;
             lastEventClick = System.currentTimeMillis();
             eventSinceRelease = true;
             if (click(event.x(), event.y())) return true;
         }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == 0) {
+            mouseDown = false;
+            dragging = 0;
+        }
+        return super.mouseReleased(event);
     }
 
     /**
@@ -502,6 +631,7 @@ public final class BridgeScreen extends Screen {
     /** A left click at (mx, my): true if it hit something. */
     private boolean click(double mx, double my) {
         layout();
+        if (tab == 0 && inContent((int) my) && clickPicker(mx, my)) return true;
 
         // Tabs
         int tx = px + 14;

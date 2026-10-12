@@ -103,7 +103,7 @@ public final class BridgeConnection implements WebSocket.Listener {
     }
 
     // /gpv answers, by request id (the screen that asked gets its answer).
-    private final Map<Integer, java.util.function.Consumer<JsonObject>> profileWaiting = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, java.util.function.Consumer<JsonObject>> profileWaiting = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
     private final java.util.concurrent.atomic.AtomicInteger nextProfileId = new java.util.concurrent.atomic.AtomicInteger(1);
 
     /** Asks the bridge for a player's profile stats (/gpv); false if not signed in to the bridge. */
