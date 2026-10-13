@@ -437,6 +437,9 @@ public final class BridgeConnection implements WebSocket.Listener {
             auth.put("clientNonce", clientNonce);
             auth.put("idVersion", 2); // the server id includes the host
             auth.put("version", GuildBridgeMod.version());
+            // The first connection since joining Hypixel (not a reconnect): the server only
+            // says "a new version is out" then.
+            auth.put("firstConnect", !greeted);
             auth.put("guildChatVisible", BridgeConfig.get().guildChatVisible);
             // So Discord can show whether you'll see messages typed there.
             auth.put("showDiscord", BridgeConfig.get().showDiscord);
