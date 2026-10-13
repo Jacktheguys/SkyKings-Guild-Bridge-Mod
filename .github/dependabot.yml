@@ -1,0 +1,15 @@
+# Keeps the GitHub Actions used by the workflows up to date (as pinned commit SHAs).
+# Minecraft / Fabric versions are bumped by hand, since they need testing in-game.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Conventional Commit titles, e.g. "ci(deps): bump the actions group", so they pass the PR title check.
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]

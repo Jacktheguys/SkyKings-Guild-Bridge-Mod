@@ -4,7 +4,12 @@ A Fabric mod that links your Hypixel guild chat with your guild's Discord channe
 bridge bot account**. Every member who has the mod passes the guild chat they already see to
 Discord, and Discord messages show up in their chat.
 
-**Download, setup guide and the Discord bot:** <https://skykings.net/guild-bridge>
+**Download, setup guide and the Discord bot:** <https://skykings.net/guild-bridge> ·
+**[Releases](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/releases)**
+
+Every release is built from this repository by GitHub Actions (not on anyone's PC), and its notes
+list the jar's SHA-256 so you can check your download:
+`certutil -hashfile skykings-guild-bridge-<version>.jar SHA256` on Windows, `sha256sum` on Linux/macOS.
 
 This repository is the mod (the client). The bridge server and Discord bot it connects to are run
 by SkyKings and aren't part of this repository.
@@ -80,13 +85,14 @@ looked up by name at runtime (26.x isn't obfuscated):
 ## Building
 
 ```
-./gradlew build          # Linux/macOS (needs JDK 25)
-.\build.ps1              # Windows: downloads a JDK 25, builds, and runs the version check
+./gradlew build              # needs JDK 25
+scripts/check-versions.sh    # the version check below (needs JDK 25 and jq)
+.\build.ps1                  # Windows: downloads a pinned JDK 25 (checksum-verified), runs the check, builds
 ```
 
 The jar ends up in `build/libs/` (or `release/` with `build.ps1`).
 
-`build.ps1` also compiles against every Minecraft version in `versions.json` and fails if any
+`build.ps1` and `scripts/check-versions.sh` (which CI runs) compile against every Minecraft version in `versions.json` and fails if any
 Minecraft, Fabric or Mojang method, field or callback the mod uses differs between them. That's
 how version differences like the ones above are caught. To support a new Minecraft version, add it
 to `versions.json` and to `"minecraft"` in `src/main/resources/fabric.mod.json`, run `build.ps1`,
@@ -97,10 +103,28 @@ and handle any difference it reports the same way.
 `config/skykings-guild-bridge.json`. `serverUrl` is the bridge it connects to (default
 `wss://skykings.net/bridge/ws`).
 
+## Releases
+
+Releases are automatic ([release-please](https://github.com/googleapis/release-please)), driven by
+[Conventional Commit](https://www.conventionalcommits.org/) titles on `main`:
+
+- `feat: ...` bumps the minor version, `fix: ...` the patch, `feat!: ...` (breaking) the major.
+  `docs:`, `ci:`, `chore:` and the like don't make a release.
+- release-please keeps a "chore(main): release x.y.z" pull request open with the changelog and the
+  version bump. Merging it tags the release; `.github/workflows/release.yml` then checks the mod
+  against every Minecraft version, builds it, and attaches the jar and its SHA-256.
+- skykings.net/guild-bridge picks up the new release within 10 minutes.
+
+How the workflows stay safe: builds get a read-only token and no secrets, and release builds use no
+cache; only the publish step can write to releases, and it never runs build code. Pull requests run
+with plain `pull_request` (never `pull_request_target`). Every action is pinned to a commit SHA, and
+Dependabot keeps them updated. The Gradle wrapper is checked against Gradle's published checksums.
+
 ## Contributing
 
-Issues and pull requests are welcome. Please keep it free of anything that sends commands or chat
-on the player's behalf.
+Issues and pull requests are welcome. Open PRs against `main` with a Conventional Commit title
+(e.g. `fix: ignore party chat`); they're squash-merged. Please keep the mod free of anything that
+sends commands or chat on the player's behalf.
 
 ## License
 

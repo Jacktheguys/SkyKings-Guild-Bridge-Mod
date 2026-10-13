@@ -1,0 +1,32 @@
+# release-please reads commit titles to decide the next version and write the changelog, so PR titles
+# (squash-merged into main) must be Conventional Commits: "feat: ...", "fix: ...", "feat!: ..." (breaking).
+# Plain `pull_request` (never `pull_request_target`): it doesn't check out code and only gets a read-only token.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            revert
