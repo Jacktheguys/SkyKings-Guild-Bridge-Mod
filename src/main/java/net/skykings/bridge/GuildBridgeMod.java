@@ -139,6 +139,15 @@ public final class GuildBridgeMod implements ClientModInitializer {
         // Members' chosen name colours, in guild chat.
         ClientReceiveMessageEvents.MODIFY_GAME.register((message, overlay) ->
                 overlay || !onHypixel ? message : NameColors.recolor(message));
+        // Your block list: their guild chat lines aren't shown (but still reach Discord as usual).
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            if (overlay || !onHypixel || BridgeConfig.get().blocked.isEmpty()) return true;
+            String line = GuildChatParser.strip(message.getString());
+            GuildChatParser.ChatLine chat = GuildChatParser.parseChat(line);
+            if (chat == null || !BridgeConfig.get().isBlocked(chat.sender())) return true;
+            onChatLine(line); // the GAME listener below doesn't run for hidden lines
+            return false;
+        });
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (!overlay && onHypixel) onChatLine(GuildChatParser.strip(message.getString()));
         });
@@ -190,6 +199,20 @@ public final class GuildBridgeMod implements ClientModInitializer {
                         return 1;
                     }))
                     .then(literal("tasks").executes(ctx -> listTasks(ctx.getSource())))
+                    .then(literal("block").then(argument("name", StringArgumentType.greedyString())
+                            .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().block(StringArgumentType.getString(ctx, "name"))))))
+                    .then(literal("unblock").then(argument("name", StringArgumentType.greedyString())
+                            .suggests((ctx, builder) -> {
+                                for (String b : BridgeConfig.get().blocked) builder.suggest(b);
+                                return builder.buildFuture();
+                            })
+                            .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().unblock(StringArgumentType.getString(ctx, "name"))))))
+                    .then(literal("blocked").executes(ctx -> {
+                        java.util.List<String> blocked = BridgeConfig.get().blocked;
+                        return reply(ctx.getSource(), blocked.isEmpty()
+                                ? "Nobody is blocked. /gbridge block <name> hides someone's messages."
+                                : "Blocked (" + blocked.size() + "): " + String.join(", ", blocked));
+                    }))
                     .then(literal("show").then(argument("what", StringArgumentType.word())
                             .suggests((ctx, builder) -> {
                                 for (String s : new String[]{"discord", "bridge", "bot"}) builder.suggest(s);
@@ -361,6 +384,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 "/gbridge show <discord|bridge|bot> - hide or show those messages",
                 "/gbridge toggle - turn the bridge off or on",
                 "/gbridge tasks - staff tasks waiting for you",
+                "/gbridge block <name> - hide someone's messages (just for you), /gbridge unblock <name>",
                 "/gbridge claim <code> - Guild Master: link the guild to Discord",
                 "/gbridge reconnect"}) {
             reply(source, line);

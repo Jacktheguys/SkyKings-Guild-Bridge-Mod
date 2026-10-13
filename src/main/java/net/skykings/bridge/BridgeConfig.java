@@ -8,6 +8,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 /** Settings, saved in .minecraft/config/skykings-guild-bridge.json. */
 public final class BridgeConfig {
@@ -33,6 +36,48 @@ public final class BridgeConfig {
     public String botTextColor = "yellow";
     /** Market tools: only items that sell at least this many a day (0, 1, 5, 20, 100 or 500). */
     public int marketMinSales = 1;
+    /**
+     * Your personal ignore list: Minecraft or Discord names whose Discord, /bc and guild chat
+     * messages are hidden on your screen. Only you are affected; nothing is sent to the server.
+     */
+    public List<String> blocked = new ArrayList<>();
+
+    public static final int MAX_BLOCKED = 200;
+
+    /** Whether messages from `name` are hidden (names match ignoring case). */
+    public boolean isBlocked(String name) {
+        if (name == null || blocked == null || blocked.isEmpty()) return false;
+        String n = name.trim();
+        for (String b : blocked) if (b != null && b.equalsIgnoreCase(n)) return true;
+        return false;
+    }
+
+    /** A name as it can go on the list, or null if it can't (empty, too long). */
+    public static String cleanBlockName(String name) {
+        if (name == null) return null;
+        String n = name.replaceAll("[\\p{Cntrl}\\p{Cf}]", "").trim();
+        return n.isEmpty() || n.length() > 32 ? null : n;
+    }
+
+    /** Adds `name`; returns what to tell the player. */
+    public String block(String name) {
+        String n = cleanBlockName(name);
+        if (n == null) return "Give a name (up to 32 characters).";
+        if (isBlocked(n)) return n + " is already blocked.";
+        if (blocked.size() >= MAX_BLOCKED) return "Your block list is full (" + MAX_BLOCKED + " names).";
+        blocked.add(n);
+        blocked.sort(String.CASE_INSENSITIVE_ORDER);
+        save();
+        return "Blocked " + n + ": you won't see their Discord, /bc or guild chat messages.";
+    }
+
+    /** Removes `name`; returns what to tell the player. */
+    public String unblock(String name) {
+        String n = name == null ? "" : name.trim();
+        boolean removed = blocked.removeIf((b) -> b == null || b.toLowerCase(Locale.ROOT).equals(n.toLowerCase(Locale.ROOT)));
+        save();
+        return removed ? "Unblocked " + n + "." : n + " isn't blocked.";
+    }
 
     /** Whether Discord/bridge/bot lines should be shown right now. */
     public boolean showBridgeLines() {
@@ -52,6 +97,15 @@ public final class BridgeConfig {
             GuildBridgeMod.LOG.warn("Couldn't read {}, using defaults", FILE, e);
         }
         instance = loaded != null ? loaded : new BridgeConfig();
+        // A hand-edited file may leave the list out or put odd entries in it.
+        List<String> names = new ArrayList<>();
+        if (instance.blocked != null) {
+            for (String b : instance.blocked) {
+                String n = cleanBlockName(b);
+                if (n != null && names.size() < MAX_BLOCKED && names.stream().noneMatch(n::equalsIgnoreCase)) names.add(n);
+            }
+        }
+        instance.blocked = names;
         save();
     }
 

@@ -331,6 +331,7 @@ public final class BridgeConnection implements WebSocket.Listener {
                 String kind = String.valueOf(str(msg, "kind"));
                 String author = str(msg, "author");
                 String message = str(msg, "message");
+                if (author != null && !"system".equals(kind) && cfg.isBlocked(author)) return; // on your block list
                 boolean show = cfg.showBridgeLines(); // hidden while guild chat is toggled off
                 switch (kind) {
                     case "discord" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord", ChatFormatting.BLUE, author, str(msg, "replyTo"), rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }

@@ -16,7 +16,7 @@ import java.util.function.Consumer;
 
 /**
  * The settings screen (/gbridge): a dark panel with tabs for settings (toggle
- * switches), who's online, and every command. Everything is drawn with plain
+ * switches), who's online, every command, and your block list. Everything is drawn with plain
  * shapes and text, which work the same on every supported Minecraft version.
  */
 public final class BridgeScreen extends Screen {
@@ -34,7 +34,8 @@ public final class BridgeScreen extends Screen {
     private static final int AMBER = 0xFFF5B942;
     private static final int TRACK_OFF = 0xFF3A3E49;
 
-    private static final String[] TABS = {"Settings", "Online", "Commands"};
+    private static final String[] TABS = {"Settings", "Online", "Commands", "Blocked"};
+    private static final int BLOCKED_TAB = 3;
     private static final int ROW_H = 30;
 
     private record Toggle(String name, String description, BooleanSupplier get, Consumer<Boolean> set,
@@ -59,6 +60,11 @@ public final class BridgeScreen extends Screen {
     private boolean mouseDown;            // from click/release events (when the button can't be read directly)
     private int pickerX = -1, pickerY = -1; // where the picker was drawn this frame
     private static final int PICK_W = 132, PICK_H = 66, HUE_H = 8, PICKER_ROW_H = 96;
+    // The Blocked tab: the name being typed, and a note after Block / Unblock.
+    private String blockBuffer = "";
+    private String blockNote;
+    private boolean blockNoteGood;
+    private static final int BLOCK_LIST_TOP = 58, BLOCK_ROW_H = 20, UNBLOCK_W = 58;
 
     // Layout, worked out each frame (the window can be resized)
     private int px, py, pw, ph, contentTop, contentBottom;
@@ -142,6 +148,7 @@ public final class BridgeScreen extends Screen {
         int contentHeight = switch (tab) {
             case 0 -> drawSettings(g, y, mouseX, mouseY, dt);
             case 1 -> drawOnline(g, y, connection);
+            case BLOCKED_TAB -> drawBlocked(g, y, mouseX, mouseY);
             default -> drawCommands(g, y);
         };
         g.disableScissor();
@@ -459,6 +466,15 @@ public final class BridgeScreen extends Screen {
 
     @Override
     public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        if (tab == BLOCKED_TAB && editingHex == null) {
+            int k = event.key();
+            if (k == key("KEY_RETURN") || k == key("KEY_NUMPADENTER")) { blockTyped(); return true; }
+            if (k == key("KEY_BACKSPACE")) {
+                if (!blockBuffer.isEmpty()) blockBuffer = blockBuffer.substring(0, blockBuffer.offsetByCodePoints(blockBuffer.length(), -1));
+                return true;
+            }
+            return super.keyPressed(event); // Escape still closes the screen
+        }
         if (editingHex != null) {
             int k = event.key();
             if (k == key("KEY_ESCAPE")) editingHex = null;
@@ -471,6 +487,11 @@ public final class BridgeScreen extends Screen {
 
     @Override
     public boolean charTyped(net.minecraft.client.input.CharacterEvent event) {
+        if (tab == BLOCKED_TAB && editingHex == null) {
+            String typed = event.codepointAsString().replaceAll("[\\p{Cntrl}\\p{Cf}]", "");
+            if (blockBuffer.length() + typed.length() <= 32) blockBuffer += typed;
+            return true;
+        }
         if (editingHex == null) return super.charTyped(event);
         String typed = event.codepointAsString().replace("#", "");
         for (char c : typed.toCharArray()) {
@@ -525,6 +546,80 @@ public final class BridgeScreen extends Screen {
         return 18 + ((names.size() + 1) / 2) * 14 + 6;
     }
 
+    /**
+     * The Blocked tab: a box to type a name in, a Block button, and everyone on the list
+     * with an Unblock button. Positions are relative to the top so clicks can find them.
+     */
+    private int drawBlocked(GuiGraphicsExtractor g, int top, int mouseX, int mouseY) {
+        boolean hoverOk = inContent(mouseY);
+        g.text(font, ellipsize("Hide someone's Discord, /bc and guild chat messages.", pw - 28), px + 14, top + 2, MUTED, false);
+        g.text(font, ellipsize("Only your screen changes: they aren't told.", pw - 28), px + 14, top + 13, FAINT, false);
+
+        // Name box and Block button
+        int boxW = pw - 28 - 60, by = top + 28;
+        roundRect(g, px + 14, by, boxW, 18, 4, 0xFF1C1E26);
+        boolean caret = (System.currentTimeMillis() / 500) % 2 == 0;
+        String shown = blockBuffer.isEmpty() ? "" : ellipsizeLeft(blockBuffer, boxW - 14);
+        if (blockBuffer.isEmpty()) g.text(font, "Type a name...", px + 19, by + 5, FAINT, false);
+        g.text(font, shown + (caret ? "_" : ""), px + 19 + (blockBuffer.isEmpty() ? font.width("Type a name...") + 1 : 0), by + 5, TEXT, false);
+        int bx = px + pw - 14 - 54;
+        pill(g, "Block", bx, by, 54, true, hoverOk && inside(mouseX, mouseY, bx, by, 54, 18));
+        if (blockNote != null) g.text(font, ellipsize(blockNote, pw - 28), px + 14, top + 49, blockNoteGood ? GREEN : AMBER, false);
+
+        // The list
+        List<String> blocked = BridgeConfig.get().blocked;
+        int y = top + BLOCK_LIST_TOP;
+        g.text(font, "BLOCKED (" + blocked.size() + ")", px + 14, y + 4, ACCENT, false);
+        y += 16;
+        if (blocked.isEmpty()) {
+            g.text(font, "Nobody yet.", px + 14, y + 4, FAINT, false);
+            return y - top + 18;
+        }
+        for (String name : blocked) {
+            boolean rowHover = hoverOk && inside(mouseX, mouseY, px + 6, y, pw - 12, BLOCK_ROW_H - 2);
+            if (rowHover) roundRect(g, px + 6, y, pw - 12, BLOCK_ROW_H - 2, 5, ROW_HOVER);
+            roundRect(g, px + 14, y + 7, 5, 5, 2, RED);
+            g.text(font, ellipsize(name, pw - 28 - UNBLOCK_W - 20), px + 24, y + 5, TEXT, false);
+            int ux = px + pw - 14 - UNBLOCK_W;
+            pill(g, "Unblock", ux, y, UNBLOCK_W, false, hoverOk && inside(mouseX, mouseY, ux, y, UNBLOCK_W, 18));
+            y += BLOCK_ROW_H;
+        }
+        return y - top + 4;
+    }
+
+    private void blockTyped() {
+        String name = blockBuffer.trim();
+        if (name.isEmpty()) {
+            blockNote = "Type a Minecraft or Discord name first.";
+            blockNoteGood = false;
+            return;
+        }
+        boolean had = BridgeConfig.get().isBlocked(name);
+        String result = BridgeConfig.get().block(name);
+        blockNoteGood = !had && BridgeConfig.get().isBlocked(name);
+        blockNote = blockNoteGood ? "Blocked " + BridgeConfig.cleanBlockName(name) + "." : result;
+        if (blockNoteGood) blockBuffer = "";
+    }
+
+    /** Clicks on the Blocked tab: true if one hit something. */
+    private boolean clickBlocked(double mx, double my) {
+        int top = contentTop + 6 - (int) scroll;
+        if (inside(mx, my, px + pw - 14 - 54, top + 28, 54, 18)) {
+            blockTyped();
+            return true;
+        }
+        int y = top + BLOCK_LIST_TOP + 16;
+        for (String name : new ArrayList<>(BridgeConfig.get().blocked)) {
+            if (inside(mx, my, px + pw - 14 - UNBLOCK_W, y, UNBLOCK_W, 18)) {
+                blockNote = BridgeConfig.get().unblock(name);
+                blockNoteGood = true;
+                return true;
+            }
+            y += BLOCK_ROW_H;
+        }
+        return false;
+    }
+
     private static final String[][] COMMANDS = {
             {"#In game"},
             {"/gbridge", "this screen"},
@@ -534,6 +629,8 @@ public final class BridgeScreen extends Screen {
             {"/gbridge colour <colour>", "your name colour"},
             {"/gbridge textcolour", "discord|bridge|bot <colour>"},
             {"/gpv [player] [profile]", "profile stats, like the website"},
+            {"/gbridge block <name>", "hide someone's messages"},
+            {"/gbridge unblock <name>", "show them again"},
             {"/gbridge reconnect", "sign in again"},
             {"#Guild chat, /bc or Discord"},
             {"!nw [player]", "networth"},
@@ -545,6 +642,7 @@ public final class BridgeScreen extends Screen {
             {"!guild [player]", "guild averages"},
             {"!vs <a> <b>", "compare two players"},
             {"!online", "who has the mod"},
+            {"!cf", "flip a coin"},
             {"#Guild Master"},
             {"/gbridge claim <code>", "link the guild to Discord"},
     };
@@ -674,6 +772,7 @@ public final class BridgeScreen extends Screen {
             }
             if (clickColor(mx, my, y)) return true;
         }
+        if (tab == BLOCKED_TAB && inContent((int) my) && clickBlocked(mx, my)) return true;
         return false;
     }
 
@@ -734,6 +833,14 @@ public final class BridgeScreen extends Screen {
         String cut = text;
         while (!cut.isEmpty() && font.width(cut + "...") > maxWidth) cut = cut.substring(0, cut.length() - 1);
         return cut + "...";
+    }
+
+    /** The end of `text` that fits (so the caret stays in view while typing a long name). */
+    private String ellipsizeLeft(String text, int maxWidth) {
+        if (font.width(text) <= maxWidth) return text;
+        String cut = text;
+        while (cut.length() > 1 && font.width("..." + cut) > maxWidth) cut = cut.substring(1);
+        return "..." + cut;
     }
 
     private static int blend(int a, int b, float t) {
