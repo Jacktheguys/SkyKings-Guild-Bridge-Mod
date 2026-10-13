@@ -118,8 +118,10 @@ and handle any difference it reports the same way.
 Releases are automatic ([release-please](https://github.com/googleapis/release-please)), driven by
 [Conventional Commit](https://www.conventionalcommits.org/) titles on `main`:
 
-- `feat: ...` bumps the minor version, `fix: ...` the patch, `feat!: ...` (breaking) the major.
+- Every release bumps the patch version (1.4.0 -> 1.4.1), whether it has `feat:` or `fix:` commits.
   `docs:`, `ci:`, `chore:` and the like don't make a release.
+- A bigger update gets a minor bump by adding a `Release-As: 1.5.0` footer to one of its commits
+  (the exact version you want next).
 - release-please keeps a "chore(main): release x.y.z" pull request open with the changelog and the
   version bump. Merging it tags the release; `.github/workflows/release.yml` then checks the mod
   against every Minecraft version, builds it, and attaches the jar and its SHA-256.
