@@ -31,6 +31,8 @@ public final class BridgeConfig {
     public String discordTextColor = "white";
     public String bridgeTextColor = "white";
     public String botTextColor = "yellow";
+    /** Market tools: only items that sell at least this many a day (0, 1, 5, 20, 100 or 500). */
+    public int marketMinSales = 1;
 
     /** Whether Discord/bridge/bot lines should be shown right now. */
     public boolean showBridgeLines() {

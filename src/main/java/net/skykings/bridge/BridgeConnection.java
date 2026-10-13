@@ -107,7 +107,7 @@ public final class BridgeConnection implements WebSocket.Listener {
     private final java.util.concurrent.atomic.AtomicInteger nextProfileId = new java.util.concurrent.atomic.AtomicInteger(1);
 
     /** Asks the bridge for a market tool (/gscanner, /gbazaar, /gmarket); false if not signed in to the bridge. */
-    public boolean requestMarket(String tool, java.util.function.Consumer<JsonObject> answer) {
+    public boolean requestMarket(String tool, int minSales, java.util.function.Consumer<JsonObject> answer) {
         if (!ready) return false;
         int id = nextProfileId.getAndIncrement();
         profileWaiting.put(id, answer);
@@ -115,6 +115,7 @@ public final class BridgeConnection implements WebSocket.Listener {
         Map<String, Object> fields = new HashMap<>();
         fields.put("id", id);
         fields.put("tool", tool);
+        fields.put("minSales", minSales);
         send("market_request", fields);
         return true;
     }

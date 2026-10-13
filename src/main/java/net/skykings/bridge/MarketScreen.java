@@ -39,6 +39,8 @@ public final class MarketScreen extends Screen {
     private static final int GREEN = 0xFF55FF55;
     private static final int RED = 0xFFF2545B;
     private static final int ROW_H = 22, SLOT = 18;
+    private static final int[] SALES_STEPS = {0, 1, 5, 20, 100, 500};
+    private final List<int[]> salesSpots = new ArrayList<>(); // {x, y, w, h, value}
     private static final Map<String, Integer> RARITY = Map.ofEntries(
             Map.entry("COMMON", 0xFFFFFF), Map.entry("UNCOMMON", 0x55FF55), Map.entry("RARE", 0x5555FF),
             Map.entry("EPIC", 0xAA00AA), Map.entry("LEGENDARY", 0xFFAA00), Map.entry("MYTHIC", 0xFF55FF),
@@ -78,7 +80,7 @@ public final class MarketScreen extends Screen {
         loading = true;
         error = null;
         refreshedAt = System.currentTimeMillis();
-        boolean asked = GuildBridgeMod.connection().requestMarket(TOOLS[tool], (msg) -> {
+        boolean asked = GuildBridgeMod.connection().requestMarket(TOOLS[tool], BridgeConfig.get().marketMinSales, (msg) -> {
             loading = false;
             if (msg.has("ok") && msg.get("ok").getAsBoolean() && msg.get("data") instanceof JsonObject d) {
                 data = d;
@@ -209,8 +211,24 @@ public final class MarketScreen extends Screen {
         g.fill(px + 8, sy, px + 168, sy + 16, TILE);
         boolean caret = (System.currentTimeMillis() / 500) % 2 == 0;
         g.text(font, search.isEmpty() ? "Type to search..." : search + (caret ? "_" : ""), px + 13, sy + 4, search.isEmpty() ? FAINT : TEXT, false);
+        // "Min sales/day" picker (saved in the config)
+        salesSpots.clear();
+        int cx = px + 176;
+        small(g, "MIN SALES/DAY", cx, sy + 5, FAINT);
+        cx += (int) Math.ceil(font.width("MIN SALES/DAY") * 0.75f) + 6;
+        int chosen = BridgeConfig.get().marketMinSales;
+        for (int v : SALES_STEPS) {
+            String label = v == 0 ? "Any" : v + "+";
+            int bw = font.width(label) + 8;
+            boolean on = v == chosen, over = inside(mouseX, mouseY, cx, sy + 1, bw, 14);
+            g.fill(cx, sy + 1, cx + bw, sy + 15, on ? ORANGE : over ? 0xFF2E323C : TILE);
+            g.text(font, label, cx + 4, sy + 4, on ? 0xFF1A1A1A : TEXT, false);
+            salesSpots.add(new int[]{cx, sy + 1, bw, 14, v});
+            cx += bw + 3;
+        }
         String note = d == null ? "" : String.valueOf(str(d, "note") == null ? "" : str(d, "note"));
-        small(g, ellipsize(ChatDisplay.safe(note, 300), (int) ((pw - 190) / 0.75f)), px + 176, sy + 5, MUTED);
+        int noteX = cx + 8;
+        if (px + pw - 8 - noteX > 60) small(g, ellipsize(ChatDisplay.safe(note, 300), (int) ((px + pw - 8 - noteX) / 0.75f)), noteX, sy + 5, MUTED);
         g.fill(px + 1, top - 4, px + pw - 1, top - 3, PAGE_EDGE);
 
         if (d == null || loading) {
@@ -333,6 +351,16 @@ public final class MarketScreen extends Screen {
         if (inside(mx, my, refreshX(), py + 5, 52, 14)) {
             if (!loading) fetch();
             return true;
+        }
+        for (int[] s : salesSpots) {
+            if (inside(mx, my, s[0], s[1], s[2], s[3])) {
+                if (BridgeConfig.get().marketMinSales != s[4]) {
+                    BridgeConfig.get().marketMinSales = s[4];
+                    BridgeConfig.save();
+                    fetch();
+                }
+                return true;
+            }
         }
         for (int[] t : tabSpots) {
             if (inside(mx, my, t[0], t[1], t[2], t[3])) {
