@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.1](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.5.0...v1.5.1) (2026-10-13)
+
+
+### Features
+
+* block list in /gbridge to hide someone's Discord, /bc and guild chat messages ([8c733c4](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/8c733c456c4c0ccad947955316732fb350ef4f25))
+
+
+### Bug Fixes
+
+* show the "new version" message only when you log in, not on every reconnect ([c61807f](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/c61807f9969f679c61257d908fbddc611d365a7f))
+
 ## [1.5.0](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.4.0...v1.5.0) (2026-10-13)
 
 
