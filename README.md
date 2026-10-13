@@ -25,13 +25,23 @@ by SkyKings and aren't part of this repository.
   to guild staff with a `[Run]` button. Clicking it puts a command in the chat box; nothing is
   sent until the staff member presses **Enter**.
 - **`/gbridge`** opens the settings screen: toggles, who's online with the mod, and every command.
+- **`/gpv [player]`** shows a player's profile stats, laid out like skykings.net/profilestats.
+- **Market tools:** `/gscanner` (auction snipes), `/gbazaar` (bazaar flips) and `/gmarket` (also forge,
+  Kat, NPC and book flips), from skykings.net. Click a row to open the auction or the Bazaar.
 - **Name colours** that other mod users see in guild chat.
 
 ## It never sends commands or chat for you
 
-The mod doesn't send anything to Hypixel by itself: no automatic commands, no automatic chat. The
-only command it ever sends is a staff task (`/g promote <name>` and similar), and only after the
-player clicked `[Run]` and pressed Enter, one press, one command. `StaffTasks.java` also checks
+The mod doesn't send anything to Hypixel by itself: no automatic commands, no automatic chat.
+Every command it sends is one the player asked for, one at a time:
+
+- **Market tools** (`/gscanner`, `/gbazaar`, `/gmarket`): clicking a row sends `/viewauction <id>` or
+  `/bz <item>` to open that auction or Bazaar search, nothing more. One click, one command, at most one
+  a second, and only on Hypixel. The mod builds the command itself from a checked auction id or item name
+  (`GuildBridgeMod.runMarketAction`); nothing from the server is run as a command. Buying is still done in
+  Hypixel's own menu.
+- **Staff tasks** (`/g promote <name>` and similar): only after the player clicked `[Run]` and pressed
+  Enter, one press, one command. `StaffTasks.java` also checks
 every staff command against a fixed allow-list (`/g promote|demote|invite|unmute|kick|mute`), so
 even a misbehaving server couldn't make it run anything else. A command only runs when the
 server confirms a task this player asked to run in the last few seconds; the server can't make

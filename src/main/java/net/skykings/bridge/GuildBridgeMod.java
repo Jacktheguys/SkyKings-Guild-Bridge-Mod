@@ -42,6 +42,8 @@ public final class GuildBridgeMod implements ClientModInitializer {
     private static boolean openScreenNextTick;
     private static MediaStore.Loaded openImageNextTick;
     private static ProfileScreen openGearNextTick;
+    private static MarketScreen openMarketNextTick;
+    private static long lastMarketCommand;
     private static long guildToggleSentAt; // when the player last sent /g toggle
 
     public static BridgeConnection connection() {
@@ -154,6 +156,10 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 guildToggleSentAt = 0;
                 setGuildChatVisible(!BridgeConfig.get().guildChatVisible);
             }
+            if (openMarketNextTick != null) {
+                ScreenAccess.setScreen(client, openMarketNextTick);
+                openMarketNextTick = null;
+            }
             if (openGearNextTick != null) {
                 ScreenAccess.setScreen(client, openGearNextTick);
                 openGearNextTick = null;
@@ -224,6 +230,17 @@ public final class GuildBridgeMod implements ClientModInitializer {
                             .then(argument("profile", StringArgumentType.word())
                                     .executes(ctx -> openGear(ctx.getSource(), StringArgumentType.getString(ctx, "player"),
                                             StringArgumentType.getString(ctx, "profile"))))));
+            // Market tools (data from skykings.net through the bridge).
+            dispatcher.register(literal("gscanner").executes(ctx -> openMarket("snipes")));
+            dispatcher.register(literal("gbazaar").executes(ctx -> openMarket("bazaar")));
+            dispatcher.register(literal("gmarket")
+                    .executes(ctx -> openMarket("snipes"))
+                    .then(argument("tool", StringArgumentType.word())
+                            .suggests((ctx, builder) -> {
+                                for (String t : MarketScreen.TOOLS) builder.suggest(t);
+                                return builder.buildFuture();
+                            })
+                            .executes(ctx -> openMarket(StringArgumentType.getString(ctx, "tool")))));
             dispatcher.register(literal("bc").then(argument("message", StringArgumentType.greedyString())
                     .executes(ctx -> sendIfReady(ctx, "bridge_chat", Map.of("message", StringArgumentType.getString(ctx, "message"))))));
         });
@@ -248,6 +265,33 @@ public final class GuildBridgeMod implements ClientModInitializer {
         if (profile != null && !profile.matches("[A-Za-z]{1,20}")) return reply(source, "That isn't a profile name (like Peach or Apple).");
         openGearNextTick = ProfileScreen.load(player, profile);
         return 1;
+    }
+
+    private static int openMarket(String tool) {
+        openMarketNextTick = MarketScreen.load(tool);
+        return 1;
+    }
+
+    /**
+     * A market row was clicked: open that auction (/viewauction) or search the Bazaar (/bz).
+     * The command is built here from a checked auction id or item name; nothing from the
+     * server is run as a command. Only on Hypixel, and at most one a second.
+     */
+    static boolean runMarketAction(String type, String value) {
+        Minecraft client = Minecraft.getInstance();
+        if (!onHypixel || client.player == null) {
+            ChatDisplay.system("That works on Hypixel.");
+            return false;
+        }
+        String command;
+        if ("auction".equals(type) && value != null && value.matches("[0-9a-f]{32}")) command = "viewauction " + value;
+        else if ("bazaar".equals(type) && value != null && value.matches("[A-Za-z0-9 '+:.()-]{1,40}")) command = "bz " + value.trim();
+        else return false;
+        long now = System.currentTimeMillis();
+        if (now - lastMarketCommand < 1000) return false;
+        lastMarketCommand = now;
+        client.player.connection.sendCommand(command);
+        return true;
     }
 
     private static int openSettings() {
@@ -311,6 +355,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 "/gbridge textcolour <discord|bridge|bot> <colour> - message text colours",
                 "/bc <message> - talk to Discord and mod users only (not in guild chat)",
                 "/gpv [player] [profile] - a player's profile stats, like skykings.net/profilestats",
+                "/gscanner - auction snipes, /gbazaar - bazaar flips, /gmarket - every market tool",
                 "/gbridge status - connection status",
                 "/gbridge online - who's online with the mod",
                 "/gbridge show <discord|bridge|bot> - hide or show those messages",

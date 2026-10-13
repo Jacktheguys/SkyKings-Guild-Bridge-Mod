@@ -106,6 +106,19 @@ public final class BridgeConnection implements WebSocket.Listener {
     private final Map<Integer, java.util.function.Consumer<JsonObject>> profileWaiting = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
     private final java.util.concurrent.atomic.AtomicInteger nextProfileId = new java.util.concurrent.atomic.AtomicInteger(1);
 
+    /** Asks the bridge for a market tool (/gscanner, /gbazaar, /gmarket); false if not signed in to the bridge. */
+    public boolean requestMarket(String tool, java.util.function.Consumer<JsonObject> answer) {
+        if (!ready) return false;
+        int id = nextProfileId.getAndIncrement();
+        profileWaiting.put(id, answer);
+        if (profileWaiting.size() > 20) profileWaiting.remove(profileWaiting.keySet().iterator().next());
+        Map<String, Object> fields = new HashMap<>();
+        fields.put("id", id);
+        fields.put("tool", tool);
+        send("market_request", fields);
+        return true;
+    }
+
     /** Asks the bridge for a player's profile stats (/gpv); false if not signed in to the bridge. */
     public boolean requestProfile(String player, String profile, java.util.function.Consumer<JsonObject> answer) {
         if (!ready) return false;
@@ -323,7 +336,7 @@ public final class BridgeConnection implements WebSocket.Listener {
                     case "discord_officer" -> { if (show && cfg.showDiscord) ChatDisplay.message("Discord Officer", ChatFormatting.DARK_AQUA, author, str(msg, "replyTo"), rgbField(msg), NameColors.textRgb(cfg.discordTextColor, "white"), message, media(msg, "emojis"), media(msg, "images")); }
                     case "bridge" -> { if (show && cfg.showBridgeChat) ChatDisplay.message("Bridge Chat", ChatFormatting.AQUA, author, NameColors.rgb(str(msg, "color")), NameColors.textRgb(cfg.bridgeTextColor, "white"), message); }
                     case "bot" -> { if (show && cfg.showBotReplies) ChatDisplay.message("Bot", ChatFormatting.GOLD, "SkyKings", null, NameColors.textRgb(cfg.botTextColor, "yellow"), message); }
-                    case "system" -> ChatDisplay.system(message);
+                    case "system" -> ChatDisplay.system(message, str(msg, "link"), str(msg, "linkLabel"));
                     default -> { } // unknown kinds aren't shown (they'd look like the mod's own messages)
                 }
             }
@@ -350,7 +363,7 @@ public final class BridgeConnection implements WebSocket.Listener {
             case "task_claimed" -> StaffTasks.claimed(msg.get("id").getAsLong());
             case "task_gone" -> StaffTasks.remove(msg.get("id").getAsLong());
             case "error" -> ChatDisplay.system(String.valueOf(str(msg, "message")));
-            case "profile" -> {
+            case "profile", "market" -> {
                 java.util.function.Consumer<JsonObject> answer = msg.has("id") ? profileWaiting.remove(msg.get("id").getAsInt()) : null;
                 if (answer != null) answer.accept(msg);
             }

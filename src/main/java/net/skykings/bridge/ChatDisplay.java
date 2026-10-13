@@ -145,7 +145,27 @@ public final class ChatDisplay {
 
     /** A message from the mod itself. */
     public static void system(String message) {
-        show(tag("Bridge", ChatFormatting.DARK_AQUA).append(Component.literal(safe(message, 300)).withStyle(ChatFormatting.GRAY)));
+        system(message, null, null);
+    }
+
+    /**
+     * A message from the mod or the bridge, with an optional link button (e.g. "Download v1.4.0").
+     * Only skykings.net and the mod's GitHub page can be linked, and the game asks before opening it.
+     */
+    public static void system(String message, String link, String linkLabel) {
+        MutableComponent line = tag("Bridge", ChatFormatting.DARK_AQUA).append(Component.literal(safe(message, 300)).withStyle(ChatFormatting.GRAY));
+        if (link != null && (link.startsWith("https://skykings.net/") || link.startsWith("https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod"))) {
+            try {
+                line.append(Component.literal(" "));
+                line.append(Component.literal("[" + safe(linkLabel == null ? "Open" : linkLabel, 30) + "]").withStyle(Style.EMPTY
+                        .withColor(ChatFormatting.GREEN).withBold(true)
+                        .withClickEvent(new ClickEvent.OpenUrl(java.net.URI.create(link)))
+                        .withHoverEvent(new HoverEvent.ShowText(Component.literal(link)))));
+            } catch (IllegalArgumentException ignored) {
+                // not a valid address: just the message
+            }
+        }
+        show(line);
     }
 
     /** Clicking puts `command` in the chat box; the player still has to press Enter. */
