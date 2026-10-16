@@ -182,6 +182,10 @@ public final class MarketScreen extends Screen {
         super.extractRenderState(g, mouseX, mouseY, partialTick);
         layout();
         pollClick(mouseX, mouseY);
+        if (!textInputOn) {
+            textInputOn = true;
+            ScreenAccess.textInput(this, true); // the search box: 26.3 only sends typed characters when asked
+        }
 
         g.fill(px - 1, py - 1, px + pw + 1, py + ph + 1, PAGE_EDGE);
         g.fill(px, py, px + pw, py + ph, PAGE);
@@ -421,6 +425,15 @@ public final class MarketScreen extends Screen {
             return true;
         }
         return super.charTyped(event);
+    }
+
+    private boolean textInputOn;
+
+    @Override
+    public void removed() {
+        if (textInputOn) ScreenAccess.textInput(this, false);
+        textInputOn = false;
+        super.removed();
     }
 
     @Override

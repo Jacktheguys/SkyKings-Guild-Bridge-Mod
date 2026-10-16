@@ -34,8 +34,8 @@ public final class BridgeScreen extends Screen {
     private static final int AMBER = 0xFFF5B942;
     private static final int TRACK_OFF = 0xFF3A3E49;
 
-    private static final String[] TABS = {"Settings", "Online", "Commands", "Blocked"};
-    private static final int BLOCKED_TAB = 3;
+    private static final String[] TABS = {"Settings", "Online", "Commands", "Blocked", "Filter"};
+    static final int BLOCKED_TAB = 3, FILTER_TAB = 4;
     private static final int ROW_H = 30;
 
     private record Toggle(String name, String description, BooleanSupplier get, Consumer<Boolean> set,
@@ -60,17 +60,23 @@ public final class BridgeScreen extends Screen {
     private boolean mouseDown;            // from click/release events (when the button can't be read directly)
     private int pickerX = -1, pickerY = -1; // where the picker was drawn this frame
     private static final int PICK_W = 132, PICK_H = 66, HUE_H = 8, PICKER_ROW_H = 96;
-    // The Blocked tab: the name being typed, and a note after Block / Unblock.
-    private String blockBuffer = "";
-    private String blockNote;
-    private boolean blockNoteGood;
+    // The Blocked and Filter tabs: what's being typed, and a note after adding / removing.
+    private String listBuffer = "";
+    private String listNote;
+    private boolean listNoteGood;
     private static final int BLOCK_LIST_TOP = 58, BLOCK_ROW_H = 20, UNBLOCK_W = 58;
 
     // Layout, worked out each frame (the window can be resized)
     private int px, py, pw, ph, contentTop, contentBottom;
 
     public BridgeScreen() {
+        this(0);
+    }
+
+    /** Opens on a tab (e.g. BLOCKED_TAB for /gbridge blocked). */
+    public BridgeScreen(int startTab) {
         super(Component.literal("SkyKings Guild Bridge"));
+        tab = Math.max(0, Math.min(TABS.length - 1, startTab));
         BridgeConfig cfg = BridgeConfig.get();
         BridgeConnection connection = GuildBridgeMod.connection();
         toggles.add(new Toggle("Bridge", "Connect to your guild's Discord on Hypixel",
@@ -85,6 +91,8 @@ public final class BridgeScreen extends Screen {
                 () -> cfg.showBridgeChat, (v) -> cfg.showBridgeChat = v, () -> true, null));
         toggles.add(new Toggle("Bot replies", "Show answers to !nw, !lvl and the rest",
                 () -> cfg.showBotReplies, (v) -> cfg.showBotReplies = v, () -> true, null));
+        toggles.add(new Toggle("Custom name colours", "Show colours players picked and Discord roles",
+                () -> cfg.customColors, (v) -> cfg.customColors = v, () -> true, null));
         toggles.add(new Toggle("Hide with /g toggle", "Hide Discord messages while guild chat is off",
                 () -> cfg.hideWhenGuildChatOff, (v) -> cfg.hideWhenGuildChatOff = v, () -> true, null));
         toggles.add(new Toggle("Guild chat shown", "Follows /g toggle by itself; fix it here if wrong",
@@ -110,6 +118,7 @@ public final class BridgeScreen extends Screen {
         layout();
         pollClick(mouseX, mouseY);
         followDrag(mouseX, mouseY);
+        wantTextInput(listTab() != null || editingHex != null);
 
         // Keep the online list fresh while it's showing.
         BridgeConnection connection = GuildBridgeMod.connection();
@@ -148,7 +157,7 @@ public final class BridgeScreen extends Screen {
         int contentHeight = switch (tab) {
             case 0 -> drawSettings(g, y, mouseX, mouseY, dt);
             case 1 -> drawOnline(g, y, connection);
-            case BLOCKED_TAB -> drawBlocked(g, y, mouseX, mouseY);
+            case BLOCKED_TAB, FILTER_TAB -> drawList(g, y, mouseX, mouseY, listTab());
             default -> drawCommands(g, y);
         };
         g.disableScissor();
@@ -466,11 +475,11 @@ public final class BridgeScreen extends Screen {
 
     @Override
     public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
-        if (tab == BLOCKED_TAB && editingHex == null) {
+        if (listTab() != null && editingHex == null) {
             int k = event.key();
-            if (k == key("KEY_RETURN") || k == key("KEY_NUMPADENTER")) { blockTyped(); return true; }
+            if (k == key("KEY_RETURN") || k == key("KEY_NUMPADENTER")) { listTyped(listTab()); return true; }
             if (k == key("KEY_BACKSPACE")) {
-                if (!blockBuffer.isEmpty()) blockBuffer = blockBuffer.substring(0, blockBuffer.offsetByCodePoints(blockBuffer.length(), -1));
+                if (!listBuffer.isEmpty()) listBuffer = listBuffer.substring(0, listBuffer.offsetByCodePoints(listBuffer.length(), -1));
                 return true;
             }
             return super.keyPressed(event); // Escape still closes the screen
@@ -487,9 +496,9 @@ public final class BridgeScreen extends Screen {
 
     @Override
     public boolean charTyped(net.minecraft.client.input.CharacterEvent event) {
-        if (tab == BLOCKED_TAB && editingHex == null) {
+        if (listTab() != null && editingHex == null) {
             String typed = event.codepointAsString().replaceAll("[\\p{Cntrl}\\p{Cf}]", "");
-            if (blockBuffer.length() + typed.length() <= 32) blockBuffer += typed;
+            if (listBuffer.length() + typed.length() <= 32) listBuffer += typed;
             return true;
         }
         if (editingHex == null) return super.charTyped(event);
@@ -546,73 +555,93 @@ public final class BridgeScreen extends Screen {
         return 18 + ((names.size() + 1) / 2) * 14 + 6;
     }
 
-    /**
-     * The Blocked tab: a box to type a name in, a Block button, and everyone on the list
-     * with an Unblock button. Positions are relative to the top so clicks can find them.
-     */
-    private int drawBlocked(GuiGraphicsExtractor g, int top, int mouseX, int mouseY) {
-        boolean hoverOk = inContent(mouseY);
-        g.text(font, ellipsize("Hide someone's Discord, /bc and guild chat messages.", pw - 28), px + 14, top + 2, MUTED, false);
-        g.text(font, ellipsize("Only your screen changes: they aren't told.", pw - 28), px + 14, top + 13, FAINT, false);
+    /** A tab that edits a list of your own (Blocked, Filter): a box to type in, an Add button, and a Remove button per entry. */
+    private record ListTab(String line1, String line2, String placeholder, String emptyNote, String header, String addLabel,
+                           String removeLabel, java.util.function.Supplier<List<String>> items,
+                           java.util.function.Function<String, String> add, java.util.function.Predicate<String> has,
+                           java.util.function.Function<String, String> remove, java.util.function.Function<String, String> added) {}
 
-        // Name box and Block button
+    private ListTab listTab() {
+        BridgeConfig cfg = BridgeConfig.get();
+        if (tab == BLOCKED_TAB) {
+            return new ListTab("Hide someone's Discord, /bc and guild chat messages.", "Only your screen changes: they aren't told.",
+                    "Type a name...", "Type a Minecraft or Discord name first.", "BLOCKED", "Block", "Unblock",
+                    () -> cfg.blocked, cfg::block, cfg::isBlocked, cfg::unblock,
+                    (n) -> "Blocked " + BridgeConfig.cleanBlockName(n) + ".");
+        }
+        if (tab == FILTER_TAB) {
+            return new ListTab("Show these words as **** in guild chat and bridge messages.", "Whole words only, any capitals. Just for you.",
+                    "Type a word...", "Type a word first.", "FILTERED", "Filter", "Remove",
+                    () -> cfg.filteredWords, cfg::filterAdd, (w) -> cfg.filteredWords.contains(w.trim().toLowerCase(java.util.Locale.ROOT)),
+                    cfg::filterRemove, (w) -> "Filtering \"" + w.trim().toLowerCase(java.util.Locale.ROOT) + "\".");
+        }
+        return null;
+    }
+
+    /** The list tab's contents. Positions are relative to the top so clicks can find them. */
+    private int drawList(GuiGraphicsExtractor g, int top, int mouseX, int mouseY, ListTab t) {
+        boolean hoverOk = inContent(mouseY);
+        g.text(font, ellipsize(t.line1(), pw - 28), px + 14, top + 2, MUTED, false);
+        g.text(font, ellipsize(t.line2(), pw - 28), px + 14, top + 13, FAINT, false);
+
+        // Text box and Add button
         int boxW = pw - 28 - 60, by = top + 28;
         roundRect(g, px + 14, by, boxW, 18, 4, 0xFF1C1E26);
         boolean caret = (System.currentTimeMillis() / 500) % 2 == 0;
-        String shown = blockBuffer.isEmpty() ? "" : ellipsizeLeft(blockBuffer, boxW - 14);
-        if (blockBuffer.isEmpty()) g.text(font, "Type a name...", px + 19, by + 5, FAINT, false);
-        g.text(font, shown + (caret ? "_" : ""), px + 19 + (blockBuffer.isEmpty() ? font.width("Type a name...") + 1 : 0), by + 5, TEXT, false);
+        String shown = listBuffer.isEmpty() ? "" : ellipsizeLeft(listBuffer, boxW - 14);
+        if (listBuffer.isEmpty()) g.text(font, t.placeholder(), px + 19, by + 5, FAINT, false);
+        g.text(font, shown + (caret ? "_" : ""), px + 19 + (listBuffer.isEmpty() ? font.width(t.placeholder()) + 1 : 0), by + 5, TEXT, false);
         int bx = px + pw - 14 - 54;
-        pill(g, "Block", bx, by, 54, true, hoverOk && inside(mouseX, mouseY, bx, by, 54, 18));
-        if (blockNote != null) g.text(font, ellipsize(blockNote, pw - 28), px + 14, top + 49, blockNoteGood ? GREEN : AMBER, false);
+        pill(g, t.addLabel(), bx, by, 54, true, hoverOk && inside(mouseX, mouseY, bx, by, 54, 18));
+        if (listNote != null) g.text(font, ellipsize(listNote, pw - 28), px + 14, top + 49, listNoteGood ? GREEN : AMBER, false);
 
         // The list
-        List<String> blocked = BridgeConfig.get().blocked;
+        List<String> items = t.items().get();
         int y = top + BLOCK_LIST_TOP;
-        g.text(font, "BLOCKED (" + blocked.size() + ")", px + 14, y + 4, ACCENT, false);
+        g.text(font, t.header() + " (" + items.size() + ")", px + 14, y + 4, ACCENT, false);
         y += 16;
-        if (blocked.isEmpty()) {
-            g.text(font, "Nobody yet.", px + 14, y + 4, FAINT, false);
+        if (items.isEmpty()) {
+            g.text(font, "Nothing yet.", px + 14, y + 4, FAINT, false);
             return y - top + 18;
         }
-        for (String name : blocked) {
+        for (String item : items) {
             boolean rowHover = hoverOk && inside(mouseX, mouseY, px + 6, y, pw - 12, BLOCK_ROW_H - 2);
             if (rowHover) roundRect(g, px + 6, y, pw - 12, BLOCK_ROW_H - 2, 5, ROW_HOVER);
             roundRect(g, px + 14, y + 7, 5, 5, 2, RED);
-            g.text(font, ellipsize(name, pw - 28 - UNBLOCK_W - 20), px + 24, y + 5, TEXT, false);
+            g.text(font, ellipsize(item, pw - 28 - UNBLOCK_W - 20), px + 24, y + 5, TEXT, false);
             int ux = px + pw - 14 - UNBLOCK_W;
-            pill(g, "Unblock", ux, y, UNBLOCK_W, false, hoverOk && inside(mouseX, mouseY, ux, y, UNBLOCK_W, 18));
+            pill(g, t.removeLabel(), ux, y, UNBLOCK_W, false, hoverOk && inside(mouseX, mouseY, ux, y, UNBLOCK_W, 18));
             y += BLOCK_ROW_H;
         }
         return y - top + 4;
     }
 
-    private void blockTyped() {
-        String name = blockBuffer.trim();
-        if (name.isEmpty()) {
-            blockNote = "Type a Minecraft or Discord name first.";
-            blockNoteGood = false;
+    private void listTyped(ListTab t) {
+        String text = listBuffer.trim();
+        if (text.isEmpty()) {
+            listNote = t.emptyNote();
+            listNoteGood = false;
             return;
         }
-        boolean had = BridgeConfig.get().isBlocked(name);
-        String result = BridgeConfig.get().block(name);
-        blockNoteGood = !had && BridgeConfig.get().isBlocked(name);
-        blockNote = blockNoteGood ? "Blocked " + BridgeConfig.cleanBlockName(name) + "." : result;
-        if (blockNoteGood) blockBuffer = "";
+        boolean had = t.has().test(text);
+        String result = t.add().apply(text);
+        listNoteGood = !had && t.has().test(text);
+        listNote = listNoteGood ? t.added().apply(text) : result;
+        if (listNoteGood) listBuffer = "";
     }
 
-    /** Clicks on the Blocked tab: true if one hit something. */
-    private boolean clickBlocked(double mx, double my) {
+    /** Clicks on a list tab: true if one hit something. */
+    private boolean clickList(double mx, double my, ListTab t) {
         int top = contentTop + 6 - (int) scroll;
         if (inside(mx, my, px + pw - 14 - 54, top + 28, 54, 18)) {
-            blockTyped();
+            listTyped(t);
             return true;
         }
         int y = top + BLOCK_LIST_TOP + 16;
-        for (String name : new ArrayList<>(BridgeConfig.get().blocked)) {
+        for (String item : new ArrayList<>(t.items().get())) {
             if (inside(mx, my, px + pw - 14 - UNBLOCK_W, y, UNBLOCK_W, 18)) {
-                blockNote = BridgeConfig.get().unblock(name);
-                blockNoteGood = true;
+                listNote = t.remove().apply(item);
+                listNoteGood = true;
                 return true;
             }
             y += BLOCK_ROW_H;
@@ -631,6 +660,8 @@ public final class BridgeScreen extends Screen {
             {"/gpv [player] [profile]", "profile stats, like the website"},
             {"/gbridge block <name>", "hide someone's messages"},
             {"/gbridge unblock <name>", "show them again"},
+            {"/gbridge filter add <word>", "show a word as stars"},
+            {"/chat bridge", "type straight into the bridge"},
             {"/gbridge reconnect", "sign in again"},
             {"#Guild chat, /bc or Discord"},
             {"!nw [player]", "networth"},
@@ -643,6 +674,7 @@ public final class BridgeScreen extends Screen {
             {"!vs <a> <b>", "compare two players"},
             {"!online", "who has the mod"},
             {"!cf", "flip a coin"},
+            {"!price <item>", "an item's price"},
             {"#Guild Master"},
             {"/gbridge claim <code>", "link the guild to Discord"},
     };
@@ -743,6 +775,8 @@ public final class BridgeScreen extends Screen {
                 if (tab != i) {
                     tab = i;
                     scroll = 0;
+                    listBuffer = "";
+                    listNote = null;
                     lastOnlineRequest = 0;
                 }
                 return true;
@@ -772,7 +806,7 @@ public final class BridgeScreen extends Screen {
             }
             if (clickColor(mx, my, y)) return true;
         }
-        if (tab == BLOCKED_TAB && inContent((int) my) && clickBlocked(mx, my)) return true;
+        if (listTab() != null && inContent((int) my) && clickList(mx, my, listTab())) return true;
         return false;
     }
 
@@ -780,6 +814,21 @@ public final class BridgeScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical) {
         scroll -= vertical * 14;
         return true; // clamped on the next frame
+    }
+
+    private boolean textInputOn;
+
+    /** Ask for typed characters while a text box is showing (26.3 only sends them then). */
+    private void wantTextInput(boolean want) {
+        if (want == textInputOn) return;
+        textInputOn = want;
+        ScreenAccess.textInput(this, want);
+    }
+
+    @Override
+    public void removed() {
+        wantTextInput(false);
+        super.removed();
     }
 
     @Override

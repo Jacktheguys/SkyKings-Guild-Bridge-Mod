@@ -67,8 +67,11 @@ public final class ChatDisplay {
     /** replyTo: who a Discord reply was to ("Steve" or "@someone"), shown like the old bridge bot. */
     public static void message(String label, ChatFormatting color, String author, String replyTo, Integer authorRgb, Integer textRgb,
                                String message, List<Media> emojis, List<Media> images) {
+        message = WordFilter.apply(message);
+        // Custom name colours off: everyone's name is plain white.
+        Integer nameRgb = BridgeConfig.get().customColors ? authorRgb : null;
         MutableComponent name = Component.literal(safe(author, 32));
-        name = authorRgb == null ? name.withStyle(ChatFormatting.WHITE) : name.withStyle((s) -> s.withColor(authorRgb));
+        name = nameRgb == null ? name.withStyle(ChatFormatting.WHITE) : name.withStyle((s) -> s.withColor(nameRgb));
         Style textStyle = textRgb == null ? Style.EMPTY.withColor(ChatFormatting.GRAY) : Style.EMPTY.withColor(textRgb);
         MutableComponent line = tag(label, color).append(name);
         String target = safe(replyTo, 33);

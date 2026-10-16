@@ -72,7 +72,7 @@ final class NameColors {
      * colour). Everything else in the line keeps Hypixel's own styling.
      */
     static Component recolor(Component message) {
-        if (byName.isEmpty()) return message;
+        if (byName.isEmpty() || !BridgeConfig.get().customColors) return message;
         GuildChatParser.ChatLine chat = GuildChatParser.parseChat(GuildChatParser.strip(message.getString()));
         if (chat == null) return message;
         Integer color = byName.get(chat.sender().toLowerCase());

@@ -28,6 +28,27 @@ final class ScreenAccess {
         }
     }
 
+    private static boolean textInputMissing;
+
+    /**
+     * Turns typed-text delivery on or off for one of our screens. 26.3 reads the keyboard
+     * through SDL, which only sends typed characters (charTyped) while something has asked
+     * for text input, as vanilla text boxes do when focused; our boxes are drawn by hand,
+     * so they ask here. 26.1 and 26.2 always send typed characters and have no such call.
+     */
+    static void textInput(Object owner, boolean on) {
+        if (textInputMissing) return;
+        try {
+            Object manager = Minecraft.class.getMethod("textInputManager").invoke(Minecraft.getInstance());
+            manager.getClass().getMethod(on ? "startTextInput" : "stopTextInput", Object.class).invoke(manager, owner);
+        } catch (NoSuchMethodException olderVersion) {
+            textInputMissing = true;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            textInputMissing = true;
+            GuildBridgeMod.LOG.warn("Couldn't turn on text input for typing in the bridge screens", e);
+        }
+    }
+
     private static MethodHandle find() throws ReflectiveOperationException {
         MethodHandles.Lookup lookup = MethodHandles.publicLookup();
         MethodType type = MethodType.methodType(void.class, Screen.class);

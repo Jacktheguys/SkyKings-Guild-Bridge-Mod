@@ -41,8 +41,35 @@ public final class BridgeConfig {
      * messages are hidden on your screen. Only you are affected; nothing is sent to the server.
      */
     public List<String> blocked = new ArrayList<>();
+    /** Show the name colours players picked (and Discord role colours); off = plain names. */
+    public boolean customColors = true;
+    /** Your word filter: these words are shown as **** in guild chat and bridge messages. */
+    public List<String> filteredWords = new ArrayList<>();
 
     public static final int MAX_BLOCKED = 200;
+    public static final int MAX_FILTERED_WORDS = 200;
+
+    /** Adds words to the filter (a phrase in quotes or several words); returns what to tell the player. */
+    public String filterAdd(String word) {
+        String w = cleanBlockName(word);
+        if (w == null) return "Give a word (up to 32 characters).";
+        w = w.toLowerCase(Locale.ROOT);
+        if (filteredWords.contains(w)) return "\"" + w + "\" is already filtered.";
+        if (filteredWords.size() >= MAX_FILTERED_WORDS) return "Your word filter is full (" + MAX_FILTERED_WORDS + " words).";
+        filteredWords.add(w);
+        filteredWords.sort(null);
+        save();
+        WordFilter.changed();
+        return "Filtering \"" + w + "\": it shows as stars in guild chat and bridge messages.";
+    }
+
+    public String filterRemove(String word) {
+        String w = word == null ? "" : word.trim().toLowerCase(Locale.ROOT);
+        boolean removed = filteredWords.remove(w);
+        save();
+        WordFilter.changed();
+        return removed ? "Stopped filtering \"" + w + "\"." : "\"" + w + "\" isn't filtered.";
+    }
 
     /** Whether messages from `name` are hidden (names match ignoring case). */
     public boolean isBlocked(String name) {
@@ -106,6 +133,14 @@ public final class BridgeConfig {
             }
         }
         instance.blocked = names;
+        List<String> words = new ArrayList<>();
+        if (instance.filteredWords != null) {
+            for (String w : instance.filteredWords) {
+                String n = cleanBlockName(w);
+                if (n != null && words.size() < MAX_FILTERED_WORDS && !words.contains(n.toLowerCase(Locale.ROOT))) words.add(n.toLowerCase(Locale.ROOT));
+            }
+        }
+        instance.filteredWords = words;
         save();
     }
 

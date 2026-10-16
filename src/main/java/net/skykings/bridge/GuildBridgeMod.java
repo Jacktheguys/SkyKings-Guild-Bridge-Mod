@@ -39,7 +39,8 @@ public final class GuildBridgeMod implements ClientModInitializer {
     public static final Logger LOG = LoggerFactory.getLogger("SkyKings Guild Bridge");
     private static final BridgeConnection CONNECTION = new BridgeConnection();
     private static boolean onHypixel;
-    private static boolean openScreenNextTick;
+    private static int openScreenNextTick = -1; // the /gbridge tab to open next tick, or -1
+    private static boolean bridgeChatMode;      // /chat bridge: typed chat goes to the bridge
     private static MediaStore.Loaded openImageNextTick;
     private static ProfileScreen openGearNextTick;
     private static MarketScreen openMarketNextTick;
@@ -133,12 +134,20 @@ public final class GuildBridgeMod implements ClientModInitializer {
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             onHypixel = false;
+            bridgeChatMode = false;
             CONNECTION.disconnect();
         });
 
-        // Members' chosen name colours, in guild chat.
-        ClientReceiveMessageEvents.MODIFY_GAME.register((message, overlay) ->
-                overlay || !onHypixel ? message : NameColors.recolor(message));
+        // Members' chosen name colours in guild chat, and your word filter on guild/officer lines.
+        ClientReceiveMessageEvents.MODIFY_GAME.register((message, overlay) -> {
+            if (overlay || !onHypixel) return message;
+            Component out = NameColors.recolor(message);
+            if (!BridgeConfig.get().filteredWords.isEmpty()
+                    && GuildChatParser.parseChat(GuildChatParser.strip(message.getString())) != null) {
+                out = WordFilter.apply(out);
+            }
+            return out;
+        });
         // Your block list: their guild chat lines aren't shown (but still reach Discord as usual).
         ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
             if (overlay || !onHypixel || BridgeConfig.get().blocked.isEmpty()) return true;
@@ -156,6 +165,30 @@ public final class GuildBridgeMod implements ClientModInitializer {
             if (onHypixel) onChatLine(GuildChatParser.strip(message.getString()));
         });
         ClientSendMessageEvents.COMMAND.register(GuildBridgeMod::onCommandSent);
+        // /chat bridge: like Hypixel's /chat guild, what you type goes to the bridge until you
+        // pick another channel. Nothing is sent by itself: only the messages you type.
+        ClientSendMessageEvents.ALLOW_COMMAND.register(command -> {
+            String c = command.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!onHypixel || !c.startsWith("chat ")) return true;
+            String channel = c.substring(5).trim();
+            if (channel.equals("bridge") || channel.equals("bc")) {
+                bridgeChatMode = true;
+                ChatDisplay.system("You are now in the BRIDGE channel: what you type goes to Discord and mod users. "
+                        + "Use /chat all (or guild, party...) to leave.");
+                return false;
+            }
+            bridgeChatMode = false; // any other channel: Hypixel switches you, the bridge stops
+            return true;
+        });
+        ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
+            if (!bridgeChatMode || !onHypixel) return true;
+            if (!CONNECTION.isReady()) {
+                ChatDisplay.system("Not connected to the bridge, so that wasn't sent. Use /chat all to leave the bridge channel.");
+                return false;
+            }
+            CONNECTION.send("bridge_chat", Map.of("message", message));
+            return false;
+        });
         ChatHover.register();
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             StaffTasks.tick();
@@ -177,15 +210,15 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 ScreenAccess.setScreen(client, new ImageScreen(openImageNextTick));
                 openImageNextTick = null;
             }
-            if (openScreenNextTick) {
-                openScreenNextTick = false;
-                ScreenAccess.setScreen(client, new BridgeScreen());
+            if (openScreenNextTick >= 0) {
+                ScreenAccess.setScreen(client, new BridgeScreen(openScreenNextTick));
+                openScreenNextTick = -1;
             }
         });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             dispatcher.register(literal("gbridge")
-                    .executes(ctx -> openSettings())
-                    .then(literal("settings").executes(ctx -> openSettings()))
+                    .executes(ctx -> openSettings(0))
+                    .then(literal("settings").executes(ctx -> openSettings(0)))
                     .then(literal("help").executes(ctx -> help(ctx.getSource())))
                     .then(literal("status").executes(ctx -> status(ctx.getSource())))
                     .then(literal("toggle").executes(ctx -> toggle(ctx.getSource())))
@@ -199,7 +232,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                         return 1;
                     }))
                     .then(literal("tasks").executes(ctx -> listTasks(ctx.getSource())))
-                    .then(literal("block").then(argument("name", StringArgumentType.greedyString())
+                    .then(literal("block").executes(ctx -> openSettings(BridgeScreen.BLOCKED_TAB)).then(argument("name", StringArgumentType.greedyString())
                             .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().block(StringArgumentType.getString(ctx, "name"))))))
                     .then(literal("unblock").then(argument("name", StringArgumentType.greedyString())
                             .suggests((ctx, builder) -> {
@@ -207,12 +240,16 @@ public final class GuildBridgeMod implements ClientModInitializer {
                                 return builder.buildFuture();
                             })
                             .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().unblock(StringArgumentType.getString(ctx, "name"))))))
-                    .then(literal("blocked").executes(ctx -> {
-                        java.util.List<String> blocked = BridgeConfig.get().blocked;
-                        return reply(ctx.getSource(), blocked.isEmpty()
-                                ? "Nobody is blocked. /gbridge block <name> hides someone's messages."
-                                : "Blocked (" + blocked.size() + "): " + String.join(", ", blocked));
-                    }))
+                    .then(literal("blocked").executes(ctx -> openSettings(BridgeScreen.BLOCKED_TAB)))
+                    .then(literal("filter").executes(ctx -> openSettings(BridgeScreen.FILTER_TAB))
+                            .then(literal("add").then(argument("word", StringArgumentType.greedyString())
+                                    .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().filterAdd(StringArgumentType.getString(ctx, "word"))))))
+                            .then(literal("remove").then(argument("word", StringArgumentType.greedyString())
+                                    .suggests((ctx, builder) -> {
+                                        for (String w : BridgeConfig.get().filteredWords) builder.suggest(w);
+                                        return builder.buildFuture();
+                                    })
+                                    .executes(ctx -> reply(ctx.getSource(), BridgeConfig.get().filterRemove(StringArgumentType.getString(ctx, "word")))))))
                     .then(literal("show").then(argument("what", StringArgumentType.word())
                             .suggests((ctx, builder) -> {
                                 for (String s : new String[]{"discord", "bridge", "bot"}) builder.suggest(s);
@@ -317,9 +354,9 @@ public final class GuildBridgeMod implements ClientModInitializer {
         return true;
     }
 
-    private static int openSettings() {
+    private static int openSettings(int tab) {
         if (CONNECTION.isReady()) CONNECTION.requestOnline(false); // fresh "online" count for the screen
-        openScreenNextTick = true;
+        openScreenNextTick = tab;
         return 1;
     }
 
@@ -385,6 +422,8 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 "/gbridge toggle - turn the bridge off or on",
                 "/gbridge tasks - staff tasks waiting for you",
                 "/gbridge block <name> - hide someone's messages (just for you), /gbridge unblock <name>",
+                "/gbridge filter add <word> - show a word as stars, /gbridge filter remove <word>",
+                "/chat bridge - your chat goes to the bridge until /chat all (or guild, party...)",
                 "/gbridge claim <code> - Guild Master: link the guild to Discord",
                 "/gbridge reconnect"}) {
             reply(source, line);
@@ -399,7 +438,7 @@ public final class GuildBridgeMod implements ClientModInitializer {
                 : !CONNECTION.isReady() ? "connecting..."
                 : !CONNECTION.isConfigured() ? "signed in, but your guild isn't linked to Discord yet"
                 : "connected";
-        return reply(source, "Bridge: " + state);
+        return reply(source, "Bridge: " + state + (bridgeChatMode ? ". You're in the bridge channel (/chat all to leave)." : ""));
     }
 
     private static int toggle(FabricClientCommandSource source) {
