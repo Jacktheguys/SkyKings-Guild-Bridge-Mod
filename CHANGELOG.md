@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.2](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.5.1...v1.5.2) (2026-10-16)
+
+
+### Features
+
+* /chat bridge sends what you type to the bridge until you switch with /chat all, guild or party ([4670a09](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/4670a092bb47a6304dc328b885fc65c36e33dea4))
+* /gbridge blocked and /gbridge filter open their tab ([4670a09](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/4670a092bb47a6304dc328b885fc65c36e33dea4))
+* switch in /gbridge to turn off custom name colours ([4670a09](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/4670a092bb47a6304dc328b885fc65c36e33dea4))
+* word filter that shows words you add as stars in guild chat and bridge messages ([4670a09](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/4670a092bb47a6304dc328b885fc65c36e33dea4))
+
+
+### Bug Fixes
+
+* typing in the Blocked and Filter boxes, the market search and the hex colour box on Minecraft 26.3 ([4670a09](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/4670a092bb47a6304dc328b885fc65c36e33dea4))
+
 ## [1.5.1](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.5.0...v1.5.1) (2026-10-13)
 
 
