@@ -708,9 +708,10 @@ public final class BridgeScreen extends Screen {
     }
 
     private void pill(GuiGraphicsExtractor g, String label, int x, int y, int w, boolean primary, boolean hover) {
-        int bg = primary ? (hover ? 0xFF7DBDFF : ACCENT) : (hover ? 0xFF353945 : 0xFF2A2D36);
+        // Primary buttons: white text on a deeper blue, so they're easy to read.
+        int bg = primary ? (hover ? 0xFF3D82EA : 0xFF2D6FD6) : (hover ? 0xFF353945 : 0xFF2A2D36);
         roundRect(g, x, y, w, 18, 6, bg);
-        g.centeredText(font, label, x + w / 2, y + 5, primary ? 0xFF0B1220 : TEXT);
+        g.centeredText(font, label, x + w / 2, y + 5, primary ? 0xFFFFFFFF : TEXT);
     }
 
     // ── Input ───────────────────────────────────────────────────────────
