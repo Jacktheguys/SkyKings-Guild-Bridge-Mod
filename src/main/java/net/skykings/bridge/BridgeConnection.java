@@ -48,6 +48,13 @@ public final class BridgeConnection implements WebSocket.Listener {
         t.setDaemon(true);
         return t;
     });
+    // Mojang sign-ins run here, not on the scheduler: a sign-in that hangs must not hold up
+    // the heartbeat, the sign-in watchdog or the reconnect timers.
+    private final java.util.concurrent.ExecutorService signInThreads = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "SkyKings Guild Bridge sign-in");
+        t.setDaemon(true);
+        return t;
+    });
     private final SecureRandom random = new SecureRandom();
     private final StringBuilder partial = new StringBuilder();
 
@@ -68,6 +75,63 @@ public final class BridgeConnection implements WebSocket.Listener {
     private volatile boolean greeted;      // "Connected to ...'s bridge" was shown this Hypixel session
     private volatile long droppedAt;       // when a signed-in connection dropped (0 = not dropped)
     private volatile boolean dropAnnounced;
+
+    // Our own keep-alive: a "ping" every HEARTBEAT_SECONDS (the server answers "pong"). If
+    // nothing at all arrives for DEAD_AFTER_SECONDS the connection is dead (Wi-Fi changed,
+    // laptop slept, a proxy dropped it without saying so) and we reconnect, instead of
+    // sitting on it until Windows notices minutes later.
+    private static final long HEARTBEAT_SECONDS = 30;
+    private static final long DEAD_AFTER_SECONDS = 75;
+    private volatile long lastHeard;
+
+    // Retry quickly at first (most drops are the website restarting for a few seconds),
+    // then back off: seconds to wait before attempt 1, 2, 3...
+    private static final long[] RETRY_DELAYS = {1, 2, 3, 5, 10, 20, 40, 80, 160, 300};
+
+    {
+        scheduler.scheduleAtFixedRate(this::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    // A connection that hasn't finished signing in by then is stuck (Mojang or the
+    // bridge server didn't answer): drop it and try again.
+    private static final long SIGN_IN_GIVE_UP_SECONDS = 45;
+    private volatile long openedAt;
+    private volatile boolean mojangWarned; // "Couldn't confirm your account" shown since the last sign-in
+
+    private void heartbeat() {
+        try {
+            WebSocket ws = socket;
+            if (ws == null) return;
+            if (!ready) {
+                long signingInFor = System.currentTimeMillis() - openedAt;
+                if (signingInFor > SIGN_IN_GIVE_UP_SECONDS * 1000) {
+                    GuildBridgeMod.LOG.info("Bridge sign-in didn't finish in {} s, trying again", signingInFor / 1000);
+                    drop(ws);
+                }
+                return;
+            }
+            long quietFor = System.currentTimeMillis() - lastHeard;
+            if (quietFor > DEAD_AFTER_SECONDS * 1000) {
+                GuildBridgeMod.LOG.info("Bridge connection went quiet for {} s, reconnecting", quietFor / 1000);
+                drop(ws);
+                return;
+            }
+            send("ping", Map.of());
+        } catch (Exception e) {
+            GuildBridgeMod.LOG.warn("Bridge heartbeat failed", e);
+        }
+    }
+
+    /**
+     * Gives up on a connection and schedules the next attempt. WebSocket.abort() doesn't
+     * tell the listener (no onClose or onError), so without the reconnect here the dead
+     * socket stayed stored and connect() did nothing until the player clicked Connect.
+     */
+    private synchronized void drop(WebSocket ws) {
+        if (ws == null || socket != ws) return; // already replaced or handled
+        ws.abort();
+        scheduleReconnect();
+    }
 
     public boolean isReady() {
         return ready;
@@ -207,8 +271,8 @@ public final class BridgeConnection implements WebSocket.Listener {
             droppedAt = System.currentTimeMillis();
             scheduler.schedule(this::announceIfStillDown, DROP_NOTICE_SECONDS, TimeUnit.SECONDS);
         }
-        // 1s, then 5s, 10s, 20s ... up to 5 minutes; 5 minutes if the server refused us.
-        long delay = closeReason != null ? 300 : failures == 1 ? 1 : Math.min(300, 5L << Math.min(failures - 2, 6));
+        // 1s, 2s, 3s, 5s, 10s, then backing off up to 5 minutes; 5 minutes if the server refused us.
+        long delay = closeReason != null ? 300 : RETRY_DELAYS[Math.min(failures, RETRY_DELAYS.length) - 1];
         scheduler.schedule(() -> {
             if (wanted) connect();
         }, delay, TimeUnit.SECONDS);
@@ -243,15 +307,18 @@ public final class BridgeConnection implements WebSocket.Listener {
             socket = webSocket;
             challenged = false;
         }
+        openedAt = System.currentTimeMillis();
+        lastHeard = openedAt;
         webSocket.request(1);
     }
 
     @Override
     public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
         if (!isCurrent(webSocket)) return null;
+        lastHeard = System.currentTimeMillis();
         partial.append(data);
         if (partial.length() > 512 * 1024) {
-            webSocket.abort();
+            drop(webSocket);
             return null;
         }
         if (last) {
@@ -377,6 +444,7 @@ public final class BridgeConnection implements WebSocket.Listener {
         boolean firstTime = !ready;
         ready = true;
         failures = 0;
+        mojangWarned = false;
         boolean wasDropped = droppedAt != 0;
         if (wasDropped) GuildBridgeMod.LOG.info("Bridge reconnected after {} ms", System.currentTimeMillis() - droppedAt);
         droppedAt = 0;
@@ -409,9 +477,9 @@ public final class BridgeConnection implements WebSocket.Listener {
     }
 
     private void signIn(String serverNonce) {
+        WebSocket signingIn = socket; // the connection this challenge came on
         if (serverNonce == null || !NONCE.matcher(serverNonce).matches()) {
-            WebSocket ws = socket;
-            if (ws != null) ws.abort();
+            drop(signingIn);
             return;
         }
         byte[] bytes = new byte[16];
@@ -420,18 +488,26 @@ public final class BridgeConnection implements WebSocket.Listener {
         String serverId = serverIdFor(connectedHost, serverNonce, clientNonce);
 
         // joinServer is a blocking web request to Mojang: keep it off the game and socket threads.
-        scheduler.execute(() -> {
+        signInThreads.execute(() -> {
             Minecraft client = Minecraft.getInstance();
             User user = client.getUser();
             try {
                 MojangJoin.joinServer(client, user.getProfileId(), user.getAccessToken(), serverId);
             } catch (Exception e) {
+                // Usually Mojang being slow or busy: try again (1s, 2s, 3s... up to 5 minutes).
+                // Before, this aborted without scheduling a retry, so the mod stayed
+                // disconnected until the player clicked Connect.
                 GuildBridgeMod.LOG.warn("Mojang sign-in for the bridge failed", e);
-                ChatDisplay.system("Couldn't confirm your account with Mojang, will retry.");
-                WebSocket ws = socket;
-                if (ws != null) ws.abort();
+                if (!mojangWarned) {
+                    mojangWarned = true;
+                    ChatDisplay.system("Couldn't confirm your account with Mojang, retrying...");
+                }
+                drop(signingIn);
                 return;
             }
+            // Given up on in the meantime (watchdog): this answer belongs to the old
+            // connection's challenge, and the new connection signs in by itself.
+            if (socket != signingIn) return;
             Map<String, Object> auth = new HashMap<>();
             auth.put("username", user.getName());
             auth.put("clientNonce", clientNonce);
