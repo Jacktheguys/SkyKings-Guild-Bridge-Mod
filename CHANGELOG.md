@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.3](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.5.2...v1.5.3) (2026-11-16)
+
+
+### Bug Fixes
+
+* **connection:** reconnect to the bridge by itself when signing in fails ([0774cf0](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/0774cf068a9045c7757adb40bb80cea73373cf7b))
+* **settings:** make the main buttons easier to read ([e8b18a5](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/commit/e8b18a5390c51fd704b0ddd1f1797d88f707f9c3))
+
 ## [1.5.2](https://github.com/Jacktheguys/SkyKings-Guild-Bridge-Mod/compare/v1.5.1...v1.5.2) (2026-10-16)
 
 
